@@ -6,14 +6,16 @@ import org.json.JSONObject
 
 enum class Kind { BTN, TRIG, STICK }
 
-enum class Pad(val label: String, val kind: Kind = Kind.BTN) {
-    L2("L2 (trigger kiri)", Kind.TRIG), R2("R2 (trigger kanan)", Kind.TRIG),
-    L1("L1"), R1("R1"),
-    UP("D-pad atas"), DOWN("D-pad bawah"), LEFT("D-pad kiri"), RIGHT("D-pad kanan"),
-    TRI("Segitiga"), CRS("Silang"), SQR("Kotak"), CIR("Lingkaran"),
-    LS("Stik analog kiri", Kind.STICK), RS("Stik analog kanan", Kind.STICK),
-    L3("L3 (tekan stik kiri)"), R3("R3 (tekan stik kanan)"),
-    SHARE("Share"), OPT("Options"), PS("Tombol PS"), TP("Touchpad (tekan)")
+enum class Pad(private val idl: String, private val en: String, val kind: Kind = Kind.BTN) {
+    L2("L2 (trigger kiri)", "L2 (left trigger)", Kind.TRIG), R2("R2 (trigger kanan)", "R2 (right trigger)", Kind.TRIG),
+    L1("L1", "L1"), R1("R1", "R1"),
+    UP("D-pad atas", "D-pad up"), DOWN("D-pad bawah", "D-pad down"), LEFT("D-pad kiri", "D-pad left"), RIGHT("D-pad kanan", "D-pad right"),
+    TRI("Segitiga", "Triangle"), CRS("Silang", "Cross"), SQR("Kotak", "Square"), CIR("Lingkaran", "Circle"),
+    LS("Stik analog kiri", "Left analog stick", Kind.STICK), RS("Stik analog kanan", "Right analog stick", Kind.STICK),
+    L3("L3 (tekan stik kiri)", "L3 (press left stick)"), R3("R3 (tekan stik kanan)", "R3 (press right stick)"),
+    SHARE("Share", "Share"), OPT("Options", "Options"), PS("Tombol PS", "PS button"), TP("Touchpad (tekan)", "Touchpad (press)");
+
+    val label: String get() = tr(idl, en)
 }
 
 enum class StopMode { HOLD, BRAKE, FLOAT }
@@ -44,7 +46,7 @@ data class PadSnap(
 }
 
 object Store {
-    fun save(p: SharedPreferences, m: Map<Pad, KeyCfg>) {
+    private fun toJson(m: Map<Pad, KeyCfg>): JSONObject {
         val o = JSONObject()
         m.forEach { (pad, k) ->
             val arr = JSONArray()
@@ -56,11 +58,10 @@ object Store {
             }
             o.put(pad.name, JSONObject().put("t", k.toggle).put("m", arr))
         }
-        p.edit().putString("map", o.toString()).apply()
+        return o
     }
 
-    fun load(p: SharedPreferences): Map<Pad, KeyCfg> = try {
-        val o = JSONObject(p.getString("map", "{}") ?: "{}")
+    private fun fromJson(o: JSONObject): Map<Pad, KeyCfg> {
         val r = mutableMapOf<Pad, KeyCfg>()
         for (key in o.keys()) {
             val j = o.getJSONObject(key)
@@ -74,8 +75,30 @@ object Store {
                 )
             })
         }
-        r
-    } catch (e: Exception) {
-        emptyMap()
+        return r
     }
+
+    fun save(p: SharedPreferences, m: Map<Pad, KeyCfg>) {
+        p.edit().putString("map", toJson(m).toString()).apply()
+    }
+
+    fun load(p: SharedPreferences): Map<Pad, KeyCfg> = try {
+        fromJson(JSONObject(p.getString("map", "{}") ?: "{}"))
+    } catch (e: Exception) { emptyMap() }
+
+    fun saveProfiles(p: SharedPreferences, pr: Map<String, Map<Pad, KeyCfg>>) {
+        val a = JSONArray()
+        pr.forEach { (n, m) -> a.put(JSONObject().put("n", n).put("m", toJson(m))) }
+        p.edit().putString("profiles", a.toString()).apply()
+    }
+
+    fun loadProfiles(p: SharedPreferences): Map<String, Map<Pad, KeyCfg>> = try {
+        val a = JSONArray(p.getString("profiles", "[]") ?: "[]")
+        val r = LinkedHashMap<String, Map<Pad, KeyCfg>>()
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            r[o.getString("n")] = fromJson(o.getJSONObject("m"))
+        }
+        r
+    } catch (e: Exception) { LinkedHashMap() }
 }

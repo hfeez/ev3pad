@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothSocket
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
@@ -57,8 +59,8 @@ class Ev3Link(private val dev: BluetoothDevice) {
         return d // [counter(2), type(1), globals...]
     }
 
-    /** Pair(sensor 1..4, motor A..D) berisi nama perangkat atau null jika kosong. */
-    fun readPorts(): Pair<List<String?>, List<String?>> {
+    /** Kode tipe mentah 8 port: sensor 1..4 lalu motor A..D. */
+    fun readTypes(): List<Int> {
         val nums = intArrayOf(0, 1, 2, 3, 16, 17, 18, 19)
         val ops = ByteArrayOutputStream()
         nums.forEachIndexed { k, n ->
@@ -66,16 +68,22 @@ class Ev3Link(private val dev: BluetoothDevice) {
             ops.write(byteArrayOf(0x99.toByte(), 0x05, 0x00, n.toByte(), (0x60 or (2 * k)).toByte(), (0x60 or (2 * k + 1)).toByte()))
         }
         val d = query(ops.toByteArray(), 16)
-        val names = nums.indices.map { k -> typeName(if (d.size > 3 + 2 * k) d[3 + 2 * k].toInt() and 0xFF else 126) }
-        return Pair(names.subList(0, 4), names.subList(4, 8))
+        return nums.indices.map { k -> if (d.size > 3 + 2 * k) d[3 + 2 * k].toInt() and 0xFF else 126 }
     }
 
-    private fun typeName(t: Int): String? = when (t) {
-        7 -> "Motor besar"; 8 -> "Motor sedang"
-        16 -> "Sensor sentuh"; 29 -> "Sensor warna"; 30 -> "Sensor ultrasonik"
-        32 -> "Sensor gyro"; 33 -> "Sensor IR"
-        0, 125, 126, 127, 255 -> null
-        else -> "Perangkat"
+    /** Baca nilai sensor (satuan SI). req = daftar (port 0..3, mode). Hasil NaN jika gagal. */
+    fun readSensors(req: List<Pair<Int, Int>>): List<Float> {
+        val ops = ByteArrayOutputStream()
+        req.forEachIndexed { k, (port, mode) ->
+            // opInput_ReadSI(layer 0, port, type 0 = tetap, mode, GV float)
+            ops.write(byteArrayOf(0x9D.toByte(), 0x00, port.toByte(), 0x00, mode.toByte(), (0x60 or (4 * k)).toByte()))
+        }
+        val d = query(ops.toByteArray(), 4 * req.size)
+        return req.indices.map { k ->
+            if (d.size >= 3 + 4 * (k + 1) && d[2].toInt() == 2)
+                ByteBuffer.wrap(d, 3 + 4 * k, 4).order(ByteOrder.LITTLE_ENDIAN).float
+            else Float.NaN
+        }
     }
 
     companion object {

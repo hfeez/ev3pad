@@ -28,21 +28,68 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("ev3pad", Context.MODE_PRIVATE)
 
     var map by mutableStateOf(Store.load(prefs)); private set
+    var profiles by mutableStateOf(Store.loadProfiles(prefs)); private set
+    var active by mutableStateOf<String?>(prefs.getString("active", null)); private set
     var ev3 by mutableStateOf(LinkState.OFF); private set
     var ev3Name by mutableStateOf(""); private set
-    var motorPorts by mutableStateOf<List<String?>>(List(4) { null }); private set
-    var sensorPorts by mutableStateOf<List<String?>>(List(4) { null }); private set
+    var motorPorts by mutableStateOf<List<Dev?>>(List(4) { null }); private set
+    var sensorPorts by mutableStateOf<List<Dev?>>(List(4) { null }); private set
+    var sensorVals by mutableStateOf<List<Float>>(List(4) { Float.NaN }); private set
+    var sensorModes by mutableStateOf<List<Int>>(List(4) { 0 }); private set
     var padOn by mutableStateOf(false); private set
-    var error by mutableStateOf<String?>(null)
+    var error by mutableStateOf<Msg?>(null)
 
     @Volatile private var snap = PadSnap()
     private var link: Ev3Link? = null
     private var loop: Job? = null
 
+    init {
+        prefs.getString("lang", null)?.let { Lang.code = it }
+        if (active !in profiles) active = null
+    }
+
+    fun setLang(c: String) { Lang.code = c; prefs.edit().putString("lang", c).apply() }
+
     // ---------- pengaturan tombol ----------
     fun saveKey(p: Pad, cfg: KeyCfg?) {
         map = map.toMutableMap().also { if (cfg == null) it.remove(p) else it[p] = cfg }
         Store.save(prefs, map)
+    }
+
+    // ---------- profil controller ----------
+    val dirty: Boolean get() = active?.let { profiles[it] != map } ?: false
+
+    private fun persistProfiles() {
+        Store.saveProfiles(prefs, profiles)
+        prefs.edit().putString("active", active).apply()
+    }
+
+    fun saveProfile(name: String) {
+        val n = name.trim(); if (n.isEmpty()) return
+        profiles = LinkedHashMap(profiles).also { it[n] = map }
+        active = n; persistProfiles()
+    }
+
+    fun loadProfile(name: String) {
+        val m = profiles[name] ?: return
+        map = m; active = name
+        Store.save(prefs, map); persistProfiles()
+    }
+
+    fun renameProfile(old: String, new: String): Boolean {
+        val n = new.trim()
+        if (n.isEmpty() || (n != old && n in profiles)) return false
+        val r = LinkedHashMap<String, Map<Pad, KeyCfg>>()
+        for ((k, v) in profiles) r[if (k == old) n else k] = v
+        profiles = r
+        if (active == old) active = n
+        persistProfiles(); return true
+    }
+
+    fun deleteProfile(name: String) {
+        profiles = LinkedHashMap(profiles).also { it.remove(name) }
+        if (active == name) active = null
+        persistProfiles()
     }
 
     // ---------- input controller ----------
@@ -66,6 +113,38 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
         )
     }
 
+    // ---------- sensor ----------
+    fun cycleSensor(i: Int) {
+        val d = sensorPorts[i] ?: return
+        val n = modesOf(d).size
+        if (n < 2) return
+        sensorModes = sensorModes.toMutableList().also { it[i] = (it[i] + 1) % n }
+        sensorVals = sensorVals.toMutableList().also { it[i] = Float.NaN }
+    }
+
+    private fun applyTypes(raw: List<Int>) {
+        val newS = raw.subList(0, 4).map { devOf(it) }
+        val modes = sensorModes.toMutableList()
+        for (i in 0..3) if (newS[i] != sensorPorts[i]) modes[i] = 0
+        sensorModes = modes
+        sensorPorts = newS
+        motorPorts = raw.subList(4, 8).map { devOf(it) }
+    }
+
+    private fun readSens(l: Ev3Link) {
+        val devs = sensorPorts; val modes = sensorModes
+        val req = (0..3).mapNotNull { i ->
+            val d = devs[i] ?: return@mapNotNull null
+            val ms = modesOf(d)
+            if (ms.isEmpty()) null else Pair(i, ms[modes[i] % ms.size].mode)
+        }
+        if (req.isEmpty()) return
+        val v = l.readSensors(req)
+        val out = MutableList(4) { Float.NaN }
+        req.forEachIndexed { k, r -> out[r.first] = v[k] }
+        sensorVals = out
+    }
+
     // ---------- koneksi EV3 ----------
     @SuppressLint("MissingPermission")
     fun bonded(): List<BluetoothDevice> = try {
@@ -80,30 +159,38 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
             val l = Ev3Link(d)
             try {
                 l.open(); link = l; ev3Name = d.safeName()
-                val (s, m) = l.readPorts(); sensorPorts = s; motorPorts = m
+                applyTypes(l.readTypes())
                 ev3 = LinkState.ON
                 startLoop(l)
             } catch (e: Exception) {
                 try { l.close() } catch (_: Exception) {}
                 ev3 = LinkState.OFF
-                error = "Gagal terhubung ke EV3. Pastikan EV3 menyala, Bluetooth EV3 aktif, dan sudah dipasangkan."
+                error = Msg(
+                    "Gagal terhubung ke EV3. Pastikan EV3 menyala, Bluetooth EV3 aktif, dan sudah dipasangkan.",
+                    "Could not connect to EV3. Make sure the EV3 is on, its Bluetooth is enabled, and it is paired."
+                )
             }
         }
+    }
+
+    private fun resetPorts() {
+        motorPorts = List(4) { null }; sensorPorts = List(4) { null }
+        sensorVals = List(4) { Float.NaN }
     }
 
     fun disconnect() {
         loop?.cancel()
         val l = link; link = null
         ev3 = LinkState.OFF
-        motorPorts = List(4) { null }; sensorPorts = List(4) { null }
+        resetPorts()
         if (l != null) viewModelScope.launch(Dispatchers.IO) { try { l.close() } catch (_: Exception) {} }
     }
 
-    private fun fail(msg: String) {
+    private fun fail(msg: Msg) {
         loop?.cancel()
         try { link?.close() } catch (_: Exception) {}
         link = null; ev3 = LinkState.OFF
-        motorPorts = List(4) { null }; sensorPorts = List(4) { null }
+        resetPorts()
         error = msg
     }
 
@@ -120,6 +207,7 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
             val toggles = mutableMapOf<Pad, Boolean>()
             var prev = emptySet<Pad>()
             var lastPorts = System.currentTimeMillis()
+            var lastSens = 0L
             try {
                 while (isActive) {
                     val s = snap; val cfg = map; val pressed = s.pressed
@@ -146,13 +234,12 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
                     if (ops.size() > 0) l.send(ops.toByteArray())
 
                     val now = System.currentTimeMillis()
-                    if (now - lastPorts > 3000) {
-                        val (se, mo) = l.readPorts(); sensorPorts = se; motorPorts = mo; lastPorts = now
-                    }
+                    if (now - lastPorts > 3000) { applyTypes(l.readTypes()); lastPorts = now }
+                    if (now - lastSens > 250) { readSens(l); lastSens = now }
                     delay(40)
                 }
             } catch (e: Exception) {
-                if (isActive) fail("Koneksi EV3 terputus.")
+                if (isActive) fail(Msg("Koneksi EV3 terputus.", "EV3 connection lost."))
             }
         }
     }
