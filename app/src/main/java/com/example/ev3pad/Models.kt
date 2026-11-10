@@ -4,7 +4,11 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class Kind { BTN, TRIG, STICK }
+/** Ukuran panggung virtual (satuan logis). Semua posisi elemen virtual memakai satuan ini, lalu diskalakan seragam ke layar. */
+const val STAGE_W = 640f
+const val STAGE_H = 360f
+
+enum class Kind { BTN, TRIG, STICK, SLIDER, ANALOG }
 
 enum class Pad(private val idl: String, private val en: String, val kind: Kind = Kind.BTN) {
     L2("L2 (trigger kiri)", "L2 (left trigger)", Kind.TRIG), R2("R2 (trigger kanan)", "R2 (right trigger)", Kind.TRIG),
@@ -32,9 +36,34 @@ data class Motor(
     val speed: SpeedMode = SpeedMode.FIXED
 )
 
-data class KeyCfg(val toggle: Boolean = false, val motors: List<Motor> = listOf(Motor()))
+enum class Cmp(val sym: String) { GT(">"), LT("<"), EQ("="), LE("≤"), GE("≥"), NE("≠") }
 
-/** Snapshot input controller; dibaca oleh loop pengirim ke EV3. */
+/** Syarat sensor: enable=true -> elemen aktif hanya jika syarat benar; false -> elemen nonaktif jika syarat benar. */
+data class Cond(
+    val enable: Boolean = true,
+    val sensor: Int = 0,
+    val field: String = "dist",
+    val op: Cmp = Cmp.GT,
+    val value: Float = 20f
+)
+
+data class KeyCfg(
+    val toggle: Boolean = false,
+    val motors: List<Motor> = listOf(Motor()),
+    val conds: List<Cond> = emptyList(),
+    val spring: Boolean = true
+)
+
+enum class VType { BTN, SLIDER, ANALOG }
+
+data class VItem(val id: Long, val type: VType, val name: String, val x: Float, val y: Float, val w: Float, val h: Float, val cfg: KeyCfg) {
+    val kind: Kind get() = when (type) { VType.BTN -> Kind.BTN; VType.SLIDER -> Kind.SLIDER; VType.ANALOG -> Kind.ANALOG }
+}
+
+/** Masukan satu elemen virtual: down = disentuh, x/y = -1..1. */
+data class VIn(val down: Boolean = false, val x: Float = 0f, val y: Float = 0f)
+
+/** Snapshot input controller fisik; dibaca oleh loop pengirim ke EV3. */
 data class PadSnap(
     val keys: Set<Pad> = emptySet(),
     val hat: Set<Pad> = emptySet(),
@@ -46,59 +75,126 @@ data class PadSnap(
 }
 
 object Store {
-    private fun toJson(m: Map<Pad, KeyCfg>): JSONObject {
-        val o = JSONObject()
-        m.forEach { (pad, k) ->
-            val arr = JSONArray()
-            k.motors.forEach { x ->
-                arr.put(
-                    JSONObject().put("p", x.port).put("cw", x.cw).put("pw", x.power)
-                        .put("st", x.stop.name).put("ax", x.axis.name).put("sp", x.speed.name)
-                )
-            }
-            o.put(pad.name, JSONObject().put("t", k.toggle).put("m", arr))
+    private fun motorJson(x: Motor) = JSONObject().put("p", x.port).put("cw", x.cw).put("pw", x.power)
+        .put("st", x.stop.name).put("ax", x.axis.name).put("sp", x.speed.name)
+
+    private fun motorFrom(x: JSONObject) = Motor(
+        x.getInt("p"), x.getBoolean("cw"), x.getInt("pw"),
+        StopMode.valueOf(x.getString("st")), Axis.valueOf(x.getString("ax")), SpeedMode.valueOf(x.getString("sp"))
+    )
+
+    private fun cfgJson(k: KeyCfg): JSONObject {
+        val m = JSONArray(); k.motors.forEach { m.put(motorJson(it)) }
+        val c = JSONArray()
+        k.conds.forEach {
+            c.put(JSONObject().put("e", it.enable).put("s", it.sensor).put("f", it.field).put("o", it.op.name).put("v", it.value.toDouble()))
         }
+        return JSONObject().put("t", k.toggle).put("sp", k.spring).put("m", m).put("c", c)
+    }
+
+    private fun cfgFrom(j: JSONObject): KeyCfg {
+        val a = j.getJSONArray("m"); val c = j.optJSONArray("c")
+        return KeyCfg(
+            j.getBoolean("t"),
+            (0 until a.length()).map { motorFrom(a.getJSONObject(it)) },
+            if (c == null) emptyList() else (0 until c.length()).map { i ->
+                val o = c.getJSONObject(i)
+                Cond(o.getBoolean("e"), o.getInt("s"), o.getString("f"), Cmp.valueOf(o.getString("o")), o.getDouble("v").toFloat())
+            },
+            j.optBoolean("sp", true)
+        )
+    }
+
+    fun mapToJson(m: Map<Pad, KeyCfg>): JSONObject {
+        val o = JSONObject()
+        m.forEach { (pad, k) -> o.put(pad.name, cfgJson(k)) }
         return o
     }
 
-    private fun fromJson(o: JSONObject): Map<Pad, KeyCfg> {
+    fun mapFromJson(o: JSONObject): Map<Pad, KeyCfg> {
         val r = mutableMapOf<Pad, KeyCfg>()
         for (key in o.keys()) {
-            val j = o.getJSONObject(key)
-            val a = j.getJSONArray("m")
-            r[Pad.valueOf(key)] = KeyCfg(j.getBoolean("t"), (0 until a.length()).map { i ->
-                val x = a.getJSONObject(i)
-                Motor(
-                    x.getInt("p"), x.getBoolean("cw"), x.getInt("pw"),
-                    StopMode.valueOf(x.getString("st")), Axis.valueOf(x.getString("ax")),
-                    SpeedMode.valueOf(x.getString("sp"))
-                )
-            })
+            try { r[Pad.valueOf(key)] = cfgFrom(o.getJSONObject(key)) } catch (e: Exception) { }
         }
         return r
     }
 
-    fun save(p: SharedPreferences, m: Map<Pad, KeyCfg>) {
-        p.edit().putString("map", toJson(m).toString()).apply()
-    }
-
-    fun load(p: SharedPreferences): Map<Pad, KeyCfg> = try {
-        fromJson(JSONObject(p.getString("map", "{}") ?: "{}"))
-    } catch (e: Exception) { emptyMap() }
-
-    fun saveProfiles(p: SharedPreferences, pr: Map<String, Map<Pad, KeyCfg>>) {
+    fun itemsToJson(l: List<VItem>): JSONArray {
         val a = JSONArray()
-        pr.forEach { (n, m) -> a.put(JSONObject().put("n", n).put("m", toJson(m))) }
-        p.edit().putString("profiles", a.toString()).apply()
+        l.forEach {
+            a.put(JSONObject().put("i", it.id).put("t", it.type.name).put("n", it.name)
+                .put("x", it.x.toDouble()).put("y", it.y.toDouble()).put("w", it.w.toDouble()).put("h", it.h.toDouble())
+                .put("c", cfgJson(it.cfg)))
+        }
+        return a
     }
 
-    fun loadProfiles(p: SharedPreferences): Map<String, Map<Pad, KeyCfg>> = try {
-        val a = JSONArray(p.getString("profiles", "[]") ?: "[]")
-        val r = LinkedHashMap<String, Map<Pad, KeyCfg>>()
+    fun itemsFromJson(a: JSONArray): List<VItem> {
+        val r = ArrayList<VItem>()
         for (i in 0 until a.length()) {
-            val o = a.getJSONObject(i)
-            r[o.getString("n")] = fromJson(o.getJSONObject("m"))
+            try {
+                val o = a.getJSONObject(i)
+                val t = VType.valueOf(o.getString("t"))
+                var w = o.getDouble("w").toFloat(); var h = o.getDouble("h").toFloat()
+                if (t == VType.ANALOG) { val s = minOf(w, h); w = s; h = s }   // analog selalu lingkaran
+                r.add(VItem(o.getLong("i"), t, o.getString("n"), o.getDouble("x").toFloat(), o.getDouble("y").toFloat(), w, h, cfgFrom(o.getJSONObject("c"))))
+            } catch (e: Exception) { }
         }
-        r
-    } catch (e: Exception) { LinkedHashMap() }
+        return r
+    }
+
+    fun saveMap(p: SharedPreferences, m: Map<Pad, KeyCfg>) { p.edit().putString("map", mapToJson(m).toString()).apply() }
+    fun loadMap(p: SharedPreferences): Map<Pad, KeyCfg> = try { mapFromJson(JSONObject(p.getString("map", "{}") ?: "{}")) } catch (e: Exception) { emptyMap() }
+
+    fun saveItems(p: SharedPreferences, l: List<VItem>) { p.edit().putString("items", itemsToJson(l).toString()).apply() }
+    fun loadItems(p: SharedPreferences): List<VItem> = try { itemsFromJson(JSONArray(p.getString("items", "[]") ?: "[]")) } catch (e: Exception) { emptyList() }
+
+    /** profiles[jenis][nama] = JSON string. jenis: "ctl" (controller) atau "virt" (virtual). */
+    fun saveProfiles(p: SharedPreferences, pr: Map<String, Map<String, String>>, act: Map<String, String?>) {
+        val o = JSONObject()
+        pr.forEach { (k, m) ->
+            val a = JSONArray()
+            m.forEach { (n, j) -> a.put(JSONObject().put("n", n).put("j", j)) }
+            o.put(k, a)
+        }
+        val ao = JSONObject()
+        act.forEach { (k, v) -> if (v != null) ao.put(k, v) }
+        p.edit().putString("profiles2", o.toString()).putString("active2", ao.toString()).apply()
+    }
+
+    fun loadProfiles(p: SharedPreferences): Map<String, Map<String, String>> {
+        val r = LinkedHashMap<String, Map<String, String>>()
+        r["ctl"] = LinkedHashMap(); r["virt"] = LinkedHashMap()
+        try {
+            val s = p.getString("profiles2", null)
+            if (s != null) {
+                val o = JSONObject(s)
+                for (k in o.keys()) {
+                    val a = o.getJSONArray(k); val m = LinkedHashMap<String, String>()
+                    for (i in 0 until a.length()) { val e = a.getJSONObject(i); m[e.getString("n")] = e.getString("j") }
+                    r[k] = m
+                }
+            } else {
+                // migrasi profil controller dari versi lama
+                val old = p.getString("profiles", null)
+                if (old != null) {
+                    val a = JSONArray(old); val m = LinkedHashMap<String, String>()
+                    for (i in 0 until a.length()) {
+                        val e = a.getJSONObject(i)
+                        m[e.getString("n")] = mapToJson(mapFromJson(e.getJSONObject("m"))).toString()
+                    }
+                    r["ctl"] = m
+                }
+            }
+        } catch (e: Exception) { }
+        return r
+    }
+
+    fun loadActive(p: SharedPreferences): Map<String, String?> = try {
+        val s = p.getString("active2", null)
+        if (s != null) {
+            val o = JSONObject(s)
+            mapOf("ctl" to (if (o.has("ctl")) o.getString("ctl") else null), "virt" to (if (o.has("virt")) o.getString("virt") else null))
+        } else mapOf("ctl" to p.getString("active", null), "virt" to null)
+    } catch (e: Exception) { mapOf("ctl" to null, "virt" to null) }
 }

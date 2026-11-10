@@ -33,32 +33,40 @@ fun devOf(code: Int): Dev? = when (code) {
     else -> Dev.values().firstOrNull { it.code == code } ?: Dev.OTHER
 }
 
-/** type: 0 angka, 1 nama warna, 2 sentuh. mode = nomor mode sensor di EV3. */
-class SMode(private val id: String, private val en: String, val mode: Int, val unit: String, val type: Int, val dec: Int) {
+/**
+ * Satu jenis pengukuran sensor.
+ * key = nama bidang (dipakai di syarat sensor), mode = nomor mode di EV3,
+ * type: 0 angka, 1 nama warna, 2 sentuh (ditekan/lepas).
+ */
+class SMode(private val id: String, private val en: String, val key: String, val mode: Int, val unit: String, val type: Int, val dec: Int) {
     fun label(): String = tr(id, en)
 }
 
 fun modesOf(d: Dev): List<SMode> = when (d) {
-    Dev.US -> listOf(SMode("Jarak", "Distance", 0, "cm", 0, 1), SMode("Jarak (inci)", "Distance (inch)", 1, "in", 0, 1))
+    Dev.US -> listOf(SMode("Jarak", "Distance", "dist", 0, "cm", 0, 1), SMode("Jarak (inci)", "Distance (inch)", "dist_in", 1, "in", 0, 1))
     Dev.COLOR -> listOf(
-        SMode("Warna", "Color", 2, "", 1, 0),
-        SMode("Cahaya pantul", "Reflected light", 0, "%", 0, 0),
-        SMode("Cahaya sekitar", "Ambient light", 1, "%", 0, 0)
+        SMode("Warna", "Color", "color", 2, "", 1, 0),
+        SMode("Cahaya pantul", "Reflected light", "refl", 0, "%", 0, 0),
+        SMode("Cahaya sekitar", "Ambient light", "amb", 1, "%", 0, 0)
     )
-    Dev.TOUCH -> listOf(SMode("Sentuhan", "Touch", 0, "", 2, 0))
-    Dev.GYRO -> listOf(SMode("Sudut", "Angle", 0, "°", 0, 0), SMode("Kecepatan sudut", "Rate", 1, "°/s", 0, 0))
-    Dev.IR -> listOf(SMode("Kedekatan", "Proximity", 0, "%", 0, 0))
+    Dev.TOUCH -> listOf(SMode("Sentuhan", "Touch", "touch", 0, "", 2, 0))
+    Dev.GYRO -> listOf(SMode("Sudut", "Angle", "ang", 0, "°", 0, 0), SMode("Kecepatan sudut", "Angular rate", "rate", 1, "°/s", 0, 0))
+    Dev.IR -> listOf(SMode("Kedekatan", "Proximity", "prox", 0, "%", 0, 0))
     else -> emptyList()
 }
 
 private val COLORS_ID = listOf("–", "Hitam", "Biru", "Hijau", "Kuning", "Merah", "Putih", "Coklat")
 private val COLORS_EN = listOf("–", "Black", "Blue", "Green", "Yellow", "Red", "White", "Brown")
 
-fun fmtSensor(m: SMode, v: Float): String {
-    if (v.isNaN()) return "–"
+fun colorName(i: Int): String = (if (Lang.code == "en") COLORS_EN else COLORS_ID)[i.coerceIn(0, 7)]
+
+fun fmtSensor(m: SMode, v: Float?): String {
+    if (v == null || v.isNaN()) return "–"
     return when (m.type) {
-        1 -> { val i = v.roundToInt().coerceIn(0, 7); if (Lang.code == "en") COLORS_EN[i] else COLORS_ID[i] }
+        1 -> colorName(v.roundToInt())
         2 -> if (v > 0.5f) tr("Ditekan", "Pressed") else tr("Lepas", "Released")
         else -> String.format(java.util.Locale.US, "%." + m.dec + "f", v) + (if (m.unit.isEmpty()) "" else " " + m.unit)
     }
 }
+
+fun fmtNum(v: Float): String = if (v % 1f == 0f) v.toInt().toString() else v.toString()

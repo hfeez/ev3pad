@@ -4,12 +4,14 @@ import android.bluetooth.BluetoothDevice
 import android.content.Intent
 import android.content.res.Configuration
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,12 +23,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.scale
@@ -35,20 +40,23 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 
-private const val W = 360f
-private const val H = 250f
+private const val PW = 360f
+private const val PH = 250f
 
 sealed class KShape
 class RectS(val x: Float, val y: Float, val w: Float, val h: Float, val r: Float) : KShape()
 class CircS(val x: Float, val y: Float, val r: Float) : KShape()
 
-/** Posisi tiap tombol di kanvas 360x250 (urutan gambar; hit-test dari belakang). */
 private val KEYS: List<Triple<Pad, KShape, String>> = listOf(
     Triple(Pad.L2, RectS(48f, 14f, 64f, 20f, 8f), "L2"),
     Triple(Pad.R2, RectS(248f, 14f, 64f, 20f, 8f), "R2"),
@@ -77,41 +85,67 @@ private fun hit(s: KShape, x: Float, y: Float): Boolean = when (s) {
     is CircS -> (x - s.x) * (x - s.x) + (y - s.y) * (y - s.y) <= (s.r + 6f) * (s.r + 6f)
 }
 
+private fun DrawScope.glow(p: Pal) {
+    drawRect(Brush.radialGradient(listOf(p.acc.copy(alpha = 0.13f), Color.Transparent), center = Offset(size.width * 0.1f, 0f), radius = size.width * 0.75f))
+    drawRect(Brush.radialGradient(listOf(p.acc2.copy(alpha = 0.13f), Color.Transparent), center = Offset(size.width, 0f), radius = size.width * 0.7f))
+}
+
 @Composable
 fun MainScreen(vm: MainVm) {
     val pal = LocalPal.current
-    var sheet by remember { mutableStateOf<Pad?>(null) }
+    var sheetPad by remember { mutableStateOf<Pad?>(null) }
+    var sheetItem by remember { mutableStateOf<Long?>(null) }
     var picker by remember { mutableStateOf(false) }
-    var profilesOpen by remember { mutableStateOf(false) }
-    var settingsOpen by remember { mutableStateOf(false) }
+    var profKind by remember { mutableStateOf<String?>(null) }
+    var settings by remember { mutableStateOf(false) }
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Box(
-        Modifier.fillMaxSize().background(pal.bg).safeDrawingPadding().padding(12.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        if (land) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TopPanel(vm, { picker = true }, { profilesOpen = true }, { settingsOpen = true },
-                    Modifier.weight(0.42f).verticalScroll(rememberScrollState()))
-                PadCard(vm, Modifier.weight(0.58f).fillMaxHeight()) { sheet = it }
-            }
-        } else {
-            Column(Modifier.widthIn(max = 720.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TopPanel(vm, { picker = true }, { profilesOpen = true }, { settingsOpen = true }, Modifier.fillMaxWidth())
-                PadCard(vm, Modifier.fillMaxWidth().weight(1f)) { sheet = it }
+    FullscreenEffects(vm.fullscreen)
+    BackHandler(vm.fullscreen) { vm.fullscreen = false }
+
+    Box(Modifier.fillMaxSize().background(pal.bg).drawBehind { glow(pal) }.safeDrawingPadding()) {
+        if (vm.fullscreen) FullscreenView(vm)
+        else Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.TopCenter) {
+            if (land) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Header(vm, { picker = true }, { settings = true })
+                        MonitorCard(vm)
+                    }
+                    ModeCard(vm, Modifier.weight(0.58f).fillMaxHeight(), { sheetPad = it }, { sheetItem = it }, { profKind = it })
+                }
+            } else {
+                Column(Modifier.widthIn(max = 720.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Header(vm, { picker = true }, { settings = true })
+                    MonitorCard(vm)
+                    ModeCard(vm, Modifier.fillMaxWidth().weight(1f), { sheetPad = it }, { sheetItem = it }, { profKind = it })
+                }
             }
         }
     }
 
     if (picker) DevicePicker(vm.bonded(), onPick = { picker = false; vm.connect(it) }, onClose = { picker = false })
-    if (profilesOpen) ProfilesSheet(vm) { profilesOpen = false }
-    if (settingsOpen) SettingsDialog(vm) { settingsOpen = false }
-    sheet?.let { p ->
-        KeySheet(p, vm.map[p], vm.motorPorts, vm.ev3 == LinkState.ON,
-            onSave = { vm.saveKey(p, it); sheet = null },
-            onReset = { vm.saveKey(p, null); sheet = null },
-            onClose = { sheet = null })
+    if (settings) SettingsDialog(vm) { settings = false }
+    profKind?.let { k -> ProfilesSheet(vm, k) { profKind = null } }
+    sheetPad?.let { p ->
+        KeySheet(
+            title = p.label, kind = p.kind, initial = vm.map[p], vm = vm, nameInit = null,
+            deleteLabel = tr("Hapus pengaturan", "Clear settings"),
+            onSave = { c, _ -> vm.saveKey(p, c); sheetPad = null },
+            onDelete = { vm.saveKey(p, null); sheetPad = null },
+            onClose = { sheetPad = null }
+        )
+    }
+    sheetItem?.let { id ->
+        vm.items.firstOrNull { it.id == id }?.let { it0 ->
+            KeySheet(
+                title = it0.name, kind = it0.kind, initial = it0.cfg, vm = vm, nameInit = it0.name,
+                deleteLabel = tr("Hapus elemen", "Delete element"),
+                onSave = { c, n -> vm.updateItem(id, n, c); sheetItem = null },
+                onDelete = { vm.removeItem(id); sheetItem = null },
+                onClose = { sheetItem = null }
+            )
+        }
     }
     vm.error?.let { msg ->
         AlertDialog(onDismissRequest = { vm.error = null }, title = { Text(tr("Perhatian", "Notice")) },
@@ -121,120 +155,157 @@ fun MainScreen(vm: MainVm) {
 }
 
 @Composable
-fun TopPanel(vm: MainVm, onConnect: () -> Unit, onProfiles: () -> Unit, onSettings: () -> Unit, modifier: Modifier = Modifier) {
+fun Header(vm: MainVm, onConnect: () -> Unit, onSettings: () -> Unit) {
+    val pal = LocalPal.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(buildAnnotatedString {
+                append("EV3 ")
+                withStyle(SpanStyle(fontFamily = FontFamily.Serif, fontStyle = FontStyle.Italic, color = pal.acc, fontSize = 22.sp)) { append("Direct Control") }
+            }, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val c = when (vm.ev3) { LinkState.ON -> pal.ok; LinkState.WAIT -> pal.acc; else -> pal.bad }
+                Box(Modifier.size(8.dp).background(c, CircleShape))
+                Spacer(Modifier.width(6.dp))
+                Text(when (vm.ev3) {
+                    LinkState.ON -> tr("Terhubung ke ", "Connected to ") + vm.ev3Name
+                    LinkState.WAIT -> tr("Menghubungkan…", "Connecting…")
+                    else -> tr("Belum terhubung", "Not connected")
+                }, fontSize = 12.sp, color = pal.mute, maxLines = 1)
+            }
+        }
+        OutlinedButton(onClick = onSettings, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(40.dp)) { Text("⚙", fontSize = 18.sp, color = pal.ink) }
+        if (vm.ev3 == LinkState.ON) OutlinedButton(onClick = { vm.disconnect() }) { Text(tr("Putuskan", "Disconnect"), color = pal.ink) }
+        else PriButton(tr("Hubungkan EV3", "Connect EV3"), enabled = vm.ev3 == LinkState.OFF, onClick = onConnect)
+    }
+}
+
+@Composable
+fun MonitorCard(vm: MainVm) {
     val pal = LocalPal.current
     val on = vm.ev3 == LinkState.ON
-    Card(modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = pal.card),
-        border = BorderStroke(1.dp, pal.line)) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("EV3 Pad", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val c = when (vm.ev3) { LinkState.ON -> pal.ok; LinkState.WAIT -> Accent; else -> pal.bad }
-                        Box(Modifier.size(9.dp).background(c, CircleShape))
-                        Spacer(Modifier.width(8.dp))
-                        Text(when (vm.ev3) {
-                            LinkState.ON -> tr("Terhubung ke ", "Connected to ") + vm.ev3Name
-                            LinkState.WAIT -> tr("Menghubungkan…", "Connecting…")
-                            else -> tr("Belum terhubung", "Not connected")
-                        }, fontSize = 13.sp, color = pal.mute)
-                    }
-                }
-                if (on) OutlinedButton(onClick = { vm.disconnect() }) { Text(tr("Putuskan", "Disconnect")) }
-                else Button(onClick = onConnect, enabled = vm.ev3 == LinkState.OFF,
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) {
-                    Text(tr("Hubungkan EV3", "Connect EV3"))
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onProfiles, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text(tr("Profil controller", "Controller profiles"), fontSize = 13.sp, maxLines = 1)
-                }
-                OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text(tr("Pengaturan", "Settings"), fontSize = 13.sp, maxLines = 1)
-                }
-            }
-
-            Text(tr("Port motor", "Motor ports"), fontSize = 12.sp, color = pal.mute, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = pal.card), border = BorderStroke(1.dp, pal.line)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            MonoLbl("Monitor EV3")
+            Lbl(tr("Port motor", "Motor ports"))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("A", "B", "C", "D").forEachIndexed { i, n ->
+                for (i in 0..3) {
                     val d = if (on) vm.motorPorts[i] else null
-                    PortChip(Modifier.weight(1f), n, if (!on) "–" else d?.label() ?: tr("kosong", "empty"), null, d != null, null)
+                    val sp = vm.speeds[i]
+                    PortChip(Modifier.weight(1f), "ABCD"[i].toString(),
+                        if (!on) "–" else if (d != null) (if (sp > 0) "+" else "") + "$sp%" else tr("kosong", "empty"),
+                        d?.label(), d != null, null, if (d != null) sp else null)
                 }
             }
-
-            Text(tr("Port sensor", "Sensor ports"), fontSize = 12.sp, color = pal.mute, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+            Lbl(tr("Port sensor", "Sensor ports"))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (i in 0..3) {
                     val d = if (on) vm.sensorPorts[i] else null
-                    val modes = if (d != null) modesOf(d) else emptyList()
-                    val m = if (modes.isEmpty()) null else modes[vm.sensorModes[i] % modes.size]
-                    val l1 = when {
-                        !on -> "–"
-                        d == null -> tr("kosong", "empty")
-                        m != null -> fmtSensor(m, vm.sensorVals[i])
-                        else -> d.label()
-                    }
-                    PortChip(Modifier.weight(1f), "${i + 1}", l1, m?.label(), d != null,
-                        if (modes.size > 1) ({ vm.cycleSensor(i) }) else null)
+                    val m = if (on) vm.sensorMode(i) else null
+                    val l1 = when { !on -> "–"; d == null -> tr("kosong", "empty"); m != null -> fmtSensor(m, vm.sensorValue(i)); else -> d.label() }
+                    val canCycle = d != null && modesOf(d).size > 1
+                    PortChip(Modifier.weight(1f), "${i + 1}", l1, m?.label(), d != null, if (canCycle) ({ vm.cycleSensor(i) }) else null, null)
                 }
             }
-            if (on && vm.sensorPorts.any { it != null && modesOf(it).size > 1 }) {
-                Text(tr("Ketuk port sensor untuk mengganti jenis pengukuran", "Tap a sensor port to change what it measures"),
-                    fontSize = 11.sp, color = pal.mute, modifier = Modifier.padding(top = 6.dp))
-            }
+            if (on && vm.sensorPorts.any { it != null && modesOf(it).size > 1 })
+                Lbl(tr("Ketuk port sensor untuk mengganti jenis pengukuran", "Tap a sensor port to change what it measures"))
         }
     }
 }
 
 @Composable
-private fun PortChip(modifier: Modifier, name: String, line1: String, line2: String?, has: Boolean, onClick: (() -> Unit)?) {
+private fun PortChip(modifier: Modifier, name: String, line1: String, line2: String?, has: Boolean, onClick: (() -> Unit)?, bar: Int?) {
     val pal = LocalPal.current
-    val sh = RoundedCornerShape(10.dp)
+    val sh = RoundedCornerShape(12.dp)
     Column(
-        modifier.clip(sh).border(1.dp, if (has) pal.ok else pal.line, sh)
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(6.dp),
+        modifier.clip(sh).border(1.dp, if (has) pal.ok.copy(alpha = 0.55f) else pal.line, sh)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(vertical = 7.dp, horizontal = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).background(if (has) pal.ok else pal.line, CircleShape))
             Spacer(Modifier.width(5.dp))
-            Text(name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(name, fontWeight = FontWeight.Medium, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         }
-        Text(line1, fontSize = 12.sp, fontWeight = if (line2 != null) FontWeight.Bold else FontWeight.Normal,
+        Text(line1, fontSize = 13.sp, fontWeight = if (line2 != null) FontWeight.SemiBold else FontWeight.Normal, fontFamily = FontFamily.Monospace,
             color = if (line2 != null) pal.ink else pal.mute, textAlign = TextAlign.Center, maxLines = 2)
-        if (line2 != null) Text(line2, fontSize = 11.sp, color = pal.mute, textAlign = TextAlign.Center, maxLines = 1)
+        Text(line2 ?: " ", fontSize = 10.5.sp, color = pal.mute, textAlign = TextAlign.Center, maxLines = 1)
+        if (bar != null) Box(
+            Modifier.padding(horizontal = 6.dp, vertical = 2.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(pal.line).drawBehind {
+                val half = size.width / 2f; val v = bar / 100f
+                if (v >= 0) drawRect(pal.acc, Offset(half, 0f), Size(half * v, size.height))
+                else drawRect(pal.acc2, Offset(half + half * v, 0f), Size(-half * v, size.height))
+            }
+        )
     }
 }
 
 @Composable
-fun PadCard(vm: MainVm, modifier: Modifier, onTap: (Pad) -> Unit) {
+fun ModeCard(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit, onItem: (Long) -> Unit, onProfiles: (String) -> Unit) {
     val pal = LocalPal.current
-    Card(modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = pal.card),
-        border = BorderStroke(1.dp, pal.line)) {
-        Column(Modifier.fillMaxSize().padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            vm.active?.let { a ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("Profil: ", "Profile: ") + a + (if (vm.dirty) tr(" (belum disimpan)", " (unsaved)") else ""),
-                        fontSize = 13.sp, color = pal.mute, modifier = Modifier.weight(1f), maxLines = 1)
-                    if (vm.dirty) TextButton(onClick = { vm.saveProfile(a) }) { Text(tr("Simpan perubahan", "Save changes")) }
-                }
+    val kind = if (vm.tab == 0) "ctl" else "virt"
+    Card(modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = pal.card), border = BorderStroke(1.dp, pal.line)) {
+        Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Seg(listOf(0 to "Controller", 1 to "Virtual"), vm.tab) { vm.setTab(it) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val a = vm.active[kind]
+                val dirty = vm.dirty(kind)
+                Text(if (a != null) tr("Profil: ", "Profile: ") + a + (if (dirty) tr(" (belum disimpan)", " (unsaved)") else "")
+                else tr("Belum ada profil aktif", "No active profile"),
+                    fontSize = 12.5.sp, color = pal.mute, modifier = Modifier.weight(1f), maxLines = 1)
+                if (dirty && a != null) SmallBtn(tr("Simpan perubahan", "Save changes")) { vm.saveProfile(kind, a) }
+                SmallBtn(tr("Profil", "Profiles")) { onProfiles(kind) }
             }
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                val w = minOf(maxWidth, maxHeight * (W / H))
-                Box(Modifier.width(w), contentAlignment = Alignment.Center) {
-                    ControllerView(Modifier.fillMaxWidth(), vm.padOn, { vm.map[it]?.motors?.isNotEmpty() == true }, onTap)
-                    if (!vm.padOn) NoPad()
-                }
-            }
-            val n = vm.map.count { it.value.motors.isNotEmpty() }
-            Text(
-                if (vm.padOn) (if (n > 0) "$n " + tr("tombol sudah diatur", "buttons configured") else tr("Ketuk tombol untuk mengatur", "Tap a button to configure"))
-                else tr("Hubungkan controller melalui Bluetooth", "Connect the controller via Bluetooth"),
-                fontSize = 13.sp, color = pal.mute, textAlign = TextAlign.Center
-            )
+            if (vm.tab == 0) PadSection(vm, Modifier.weight(1f).fillMaxWidth(), onKey)
+            else VirtualSection(vm, Modifier.weight(1f).fillMaxWidth(), onItem)
         }
+    }
+}
+
+@Composable
+private fun PadSection(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit) {
+    val pal = LocalPal.current
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val w = minOf(maxWidth, maxHeight * (PW / PH))
+            Box(Modifier.width(w), contentAlignment = Alignment.Center) {
+                ControllerView(Modifier.fillMaxWidth(), vm.padOn, { vm.map[it]?.motors?.isNotEmpty() == true }, onKey)
+                if (!vm.padOn) NoPad()
+            }
+        }
+        val n = vm.map.count { it.value.motors.isNotEmpty() }
+        Text(
+            if (vm.padOn) (if (n > 0) "$n " + tr("tombol sudah diatur", "buttons configured") else tr("Ketuk tombol untuk mengatur", "Tap a button to configure"))
+            else tr("Hubungkan controller melalui Bluetooth", "Connect the controller via Bluetooth"),
+            fontSize = 13.sp, color = pal.mute, textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun VirtualSection(vm: MainVm, modifier: Modifier, onItem: (Long) -> Unit) {
+    val pal = LocalPal.current
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.width(190.dp)) {
+                Seg(listOf(true to "✎ Edit", false to tr("▶ Kontrol", "▶ Control")), vm.edit) { vm.setEdit(it) }
+            }
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (vm.edit) {
+                    SmallBtn(tr("+ Tombol", "+ Button")) { vm.addItem(VType.BTN) }
+                    SmallBtn("+ Slider") { vm.addItem(VType.SLIDER) }
+                    SmallBtn("+ Analog") { vm.addItem(VType.ANALOG) }
+                } else SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
+            }
+        }
+        VirtualStage(vm, vm.edit, Modifier.weight(1f).fillMaxWidth(), onItem)
+        Text(
+            if (vm.edit) tr("Seret untuk memindah, tarik titik di pojok untuk mengubah ukuran, ketuk untuk mengatur.",
+                "Drag to move, pull the corner dot to resize, tap to configure.")
+            else tr("Mode kontrol: sentuh elemen untuk menggerakkan motor. Elemen redup = terkunci oleh syarat sensor.",
+                "Control mode: touch elements to drive motors. A dimmed element is locked by a sensor condition."),
+            fontSize = 12.sp, color = pal.mute
+        )
     }
 }
 
@@ -242,12 +313,12 @@ fun PadCard(vm: MainVm, modifier: Modifier, onTap: (Pad) -> Unit) {
 private fun NoPad() {
     val pal = LocalPal.current
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Canvas(Modifier.size(96.dp)) {
+        Canvas(Modifier.size(90.dp)) {
             drawLine(pal.bad, Offset(8f, 8f), Offset(size.width - 8f, size.height - 8f), strokeWidth = 18f, cap = StrokeCap.Round)
             drawLine(pal.bad, Offset(size.width - 8f, 8f), Offset(8f, size.height - 8f), strokeWidth = 18f, cap = StrokeCap.Round)
         }
         Text(tr("Controller PS4 belum terhubung", "PS4 controller not connected"), fontSize = 14.sp,
-            modifier = Modifier.background(pal.card, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+            modifier = Modifier.background(pal.bg2, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
     }
 }
 
@@ -260,16 +331,16 @@ fun ControllerView(modifier: Modifier, enabled: Boolean, active: (Pad) -> Boolea
         }
     }
     Canvas(
-        modifier.aspectRatio(W / H).alpha(if (enabled) 1f else 0.35f).pointerInput(enabled) {
+        modifier.aspectRatio(PW / PH).alpha(if (enabled) 1f else 0.35f).pointerInput(enabled) {
             detectTapGestures { o ->
                 if (!enabled) return@detectTapGestures
-                val s = size.width / W
+                val s = size.width / PW
                 val x = o.x / s; val y = o.y / s
                 KEYS.asReversed().firstOrNull { hit(it.second, x, y) }?.let { onTap(it.first) }
             }
         }
     ) {
-        scale(size.width / W, size.width / W, pivot = Offset.Zero) {
+        scale(size.width / PW, size.width / PW, pivot = Offset.Zero) {
             val body = Path().apply {
                 moveTo(70f, 70f); cubicTo(90f, 52f, 270f, 52f, 290f, 70f)
                 cubicTo(330f, 88f, 345f, 175f, 330f, 215f); cubicTo(320f, 240f, 290f, 238f, 275f, 215f)
@@ -280,7 +351,7 @@ fun ControllerView(modifier: Modifier, enabled: Boolean, active: (Pad) -> Boolea
             drawPath(body, pal.body)
             for ((pad, sh, label) in KEYS) {
                 val on = active(pad)
-                val fill = if (on) Accent else pal.key
+                val fill = if (on) pal.acc else pal.key
                 val cx: Float; val cy: Float
                 when (sh) {
                     is RectS -> {
@@ -295,7 +366,7 @@ fun ControllerView(modifier: Modifier, enabled: Boolean, active: (Pad) -> Boolea
                     }
                 }
                 if (label.isNotEmpty()) drawIntoCanvas { c ->
-                    paint.color = (if (on) OnAccent else pal.ink).toArgb()
+                    paint.color = (if (on) pal.onAcc else pal.ink).toArgb()
                     paint.textSize = if (pad == Pad.L3 || pad == Pad.R3) 9f else if (pad == Pad.TP) 10f else 11f
                     c.nativeCanvas.drawText(label, cx, cy - (paint.ascent() + paint.descent()) / 2, paint)
                 }
@@ -325,225 +396,15 @@ fun DevicePicker(devs: List<BluetoothDevice>, onPick: (BluetoothDevice) -> Unit,
 
 @Composable
 fun SettingsDialog(vm: MainVm, onClose: () -> Unit) {
-    val pal = LocalPal.current
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(tr("Pengaturan", "Settings")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(tr("Bahasa", "Language"), fontSize = 12.sp, color = pal.mute)
+                Lbl(tr("Bahasa", "Language"))
                 Seg(listOf("id" to "Indonesia", "en" to "English"), Lang.code) { vm.setLang(it) }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text(tr("Tutup", "Close")) } }
     )
-}
-
-// ------------------------------------------------------------------ profil controller
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ProfilesSheet(vm: MainVm, onClose: () -> Unit) {
-    val pal = LocalPal.current
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var saveName by remember { mutableStateOf<String?>(null) }
-    var renaming by remember { mutableStateOf<String?>(null) }
-    var renameText by remember { mutableStateOf("") }
-    var renameErr by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf<String?>(null) }
-
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = pal.card) {
-        Column(
-            Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(tr("Profil controller", "Controller profiles"), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(tr("Simpan setelan tombol dengan nama, lalu muat kembali kapan saja. Untuk mengedit: muat profil, ubah tombolnya, lalu ketuk Simpan perubahan.",
-                "Save your button settings under a name and load them any time. To edit: load a profile, change the buttons, then tap Save changes."),
-                fontSize = 13.sp, color = pal.mute)
-            Button(onClick = { saveName = vm.active ?: "" }, modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) {
-                Text(tr("Simpan setelan saat ini", "Save current settings"))
-            }
-            if (vm.profiles.isEmpty()) Text(tr("Belum ada profil tersimpan.", "No saved profiles yet."), color = pal.mute, fontSize = 13.sp)
-            for ((name, m) in vm.profiles) {
-                val cnt = m.count { it.value.motors.isNotEmpty() }
-                Column(Modifier.fillMaxWidth().border(1.dp, if (name == vm.active) Accent else pal.line, RoundedCornerShape(14.dp)).padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(name, fontWeight = FontWeight.Bold)
-                    Text("$cnt " + tr("tombol diatur", "buttons configured") + (if (name == vm.active) tr(" • aktif", " • active") else ""),
-                        fontSize = 12.sp, color = pal.mute)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(onClick = { vm.loadProfile(name); onClose() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text(tr("Muat", "Load"), fontSize = 13.sp, maxLines = 1) }
-                        OutlinedButton(onClick = { renaming = name; renameText = name; renameErr = false }, modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)) { Text(tr("Ganti nama", "Rename"), fontSize = 13.sp, maxLines = 1) }
-                        OutlinedButton(onClick = { deleting = name }, modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)) { Text(tr("Hapus", "Delete"), fontSize = 13.sp, color = pal.bad, maxLines = 1) }
-                    }
-                }
-            }
-        }
-    }
-
-    saveName?.let { txt ->
-        AlertDialog(
-            onDismissRequest = { saveName = null },
-            title = { Text(tr("Simpan profil", "Save profile")) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(value = txt, onValueChange = { saveName = it }, singleLine = true,
-                        label = { Text(tr("Nama profil", "Profile name")) })
-                    if (txt.trim() in vm.profiles) Text(tr("Nama sudah ada, profil akan ditimpa.", "Name already exists; the profile will be overwritten."),
-                        fontSize = 12.sp, color = pal.mute)
-                }
-            },
-            confirmButton = { TextButton(enabled = txt.isNotBlank(), onClick = { vm.saveProfile(txt); saveName = null }) { Text(tr("Simpan", "Save")) } },
-            dismissButton = { TextButton(onClick = { saveName = null }) { Text(tr("Batal", "Cancel")) } }
-        )
-    }
-    renaming?.let { old ->
-        AlertDialog(
-            onDismissRequest = { renaming = null },
-            title = { Text(tr("Ganti nama profil", "Rename profile")) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(value = renameText, onValueChange = { renameText = it; renameErr = false }, singleLine = true,
-                        label = { Text(tr("Nama baru", "New name")) })
-                    if (renameErr) Text(tr("Nama kosong atau sudah dipakai profil lain.", "Name is empty or already used by another profile."),
-                        fontSize = 12.sp, color = pal.bad)
-                }
-            },
-            confirmButton = {
-                TextButton(enabled = renameText.isNotBlank(), onClick = { if (vm.renameProfile(old, renameText)) renaming = null else renameErr = true }) { Text(tr("Simpan", "Save")) }
-            },
-            dismissButton = { TextButton(onClick = { renaming = null }) { Text(tr("Batal", "Cancel")) } }
-        )
-    }
-    deleting?.let { n ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(tr("Hapus profil?", "Delete profile?")) },
-            text = { Text(tr("Profil \"$n\" akan dihapus permanen.", "Profile \"$n\" will be deleted permanently.")) },
-            confirmButton = { TextButton(onClick = { vm.deleteProfile(n); deleting = null }) { Text(tr("Hapus", "Delete"), color = pal.bad) } },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(tr("Batal", "Cancel")) } }
-        )
-    }
-}
-
-// ------------------------------------------------------------------ panel pengaturan tombol
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun KeySheet(
-    pad: Pad, initial: KeyCfg?, ports: List<Dev?>, ev3On: Boolean,
-    onSave: (KeyCfg) -> Unit, onReset: () -> Unit, onClose: () -> Unit
-) {
-    val pal = LocalPal.current
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var toggle by remember { mutableStateOf(initial?.toggle ?: false) }
-    val motors = remember { mutableStateListOf<Motor>().also { it.addAll(initial?.motors ?: listOf(Motor())) } }
-
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = pal.card) {
-        Column(
-            Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(pad.label, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(when (pad.kind) {
-                Kind.BTN -> tr("Tombol digital", "Digital button")
-                Kind.TRIG -> tr("Trigger analog, kecepatan mengikuti tekanan", "Analog trigger, speed follows how far it is pressed")
-                Kind.STICK -> tr("Stik analog, kecepatan mengikuti sudut", "Analog stick, speed follows how far it is tilted")
-            }, fontSize = 13.sp, color = pal.mute)
-
-            if (pad.kind == Kind.BTN) {
-                Row(Modifier.fillMaxWidth().border(1.dp, pal.line, RoundedCornerShape(14.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(tr("Mode toggle", "Toggle mode"))
-                        Text(tr("Tekan sekali untuk menyala, tekan lagi untuk berhenti", "Press once to start, press again to stop"), fontSize = 12.sp, color = pal.mute)
-                    }
-                    Switch(checked = toggle, onCheckedChange = { toggle = it },
-                        colors = SwitchDefaults.colors(checkedTrackColor = pal.ok, checkedThumbColor = Color.White))
-                }
-            }
-
-            motors.forEachIndexed { i, m ->
-                MotorCard(i, m, pad.kind, ports, ev3On, motors.size > 1, { motors[i] = it }, { motors.removeAt(i) })
-            }
-            if (motors.size < 4) OutlinedButton(onClick = {
-                val used = motors.map { it.port }
-                var n = Motor(port = (0..3).firstOrNull { it !in used } ?: 0)
-                if (pad.kind == Kind.STICK) n = n.copy(axis = if (motors.last().axis == Axis.V) Axis.H else Axis.V)
-                motors.add(n)
-            }, modifier = Modifier.fillMaxWidth()) { Text(tr("+ Tambah motor", "+ Add motor")) }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onReset, modifier = Modifier.weight(1f)) { Text(tr("Hapus pengaturan", "Clear settings")) }
-                Button(onClick = { onSave(KeyCfg(toggle && pad.kind == Kind.BTN, motors.toList())) }, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text(tr("Simpan", "Save")) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MotorCard(
-    i: Int, m: Motor, kind: Kind, ports: List<Dev?>, ev3On: Boolean, canRemove: Boolean,
-    onChange: (Motor) -> Unit, onRemove: () -> Unit
-) {
-    val pal = LocalPal.current
-    Column(Modifier.fillMaxWidth().border(1.dp, pal.line, RoundedCornerShape(14.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Motor ${i + 1}", fontWeight = FontWeight.Bold)
-            if (canRemove) TextButton(onClick = onRemove) { Text(tr("Hapus", "Remove"), color = pal.bad) }
-        }
-        Lbl(tr("Port motor", "Motor port"))
-        Seg(listOf(0 to "A", 1 to "B", 2 to "C", 3 to "D"), m.port, { ev3On && ports.getOrNull(it) == null }) { onChange(m.copy(port = it)) }
-        if (kind == Kind.STICK) {
-            Lbl(tr("Digerakkan oleh sumbu", "Driven by axis"))
-            Seg(listOf(Axis.H to tr("Horizontal (kiri-kanan)", "Horizontal (left-right)"), Axis.V to tr("Vertikal (atas-bawah)", "Vertical (up-down)")), m.axis) { onChange(m.copy(axis = it)) }
-            Lbl(tr("Tiap motor punya sumbu sendiri. Tambah motor lain untuk sumbu yang berbeda.", "Each motor has its own axis. Add another motor for a different axis."))
-        }
-        Lbl(tr("Arah putaran", "Rotation direction"))
-        Seg(listOf(true to tr("↻ Searah jarum jam", "↻ Clockwise"), false to tr("↺ Berlawanan", "↺ Counterclockwise")), m.cw) { onChange(m.copy(cw = it)) }
-        if (kind == Kind.STICK) Lbl(tr("Berlaku saat stik ke kanan atau atas. Ke kiri atau bawah otomatis berlawanan.",
-            "Applies when the stick moves right or up. Left or down reverses automatically."))
-        if (kind != Kind.BTN) {
-            Lbl(tr("Mode kecepatan", "Speed mode"))
-            Seg(listOf(SpeedMode.FIXED to tr("Tetap", "Fixed"), SpeedMode.PROP to tr("Ikuti gerakan", "Follow movement")), m.speed) { onChange(m.copy(speed = it)) }
-            Lbl(if (m.speed == SpeedMode.PROP) tr("Makin jauh digerakkan, makin cepat. Power di bawah jadi batas maksimum.",
-                "The further it moves, the faster the motor. Power below becomes the maximum.")
-            else tr("Begitu digerakkan, motor langsung berputar di power yang ditentukan.", "As soon as it moves, the motor runs at the power you set."))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Lbl(if (kind != Kind.BTN && m.speed == SpeedMode.PROP) tr("Power maksimum", "Maximum power") else "Power")
-            Text("${m.power}%", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        }
-        Slider(value = m.power.toFloat(), onValueChange = { onChange(m.copy(power = it.roundToInt())) }, valueRange = 1f..100f)
-        Lbl(tr("Saat dilepas", "When released"))
-        Seg(listOf(StopMode.HOLD to "Hold", StopMode.BRAKE to "Brake", StopMode.FLOAT to "Float"), m.stop) { onChange(m.copy(stop = it)) }
-    }
-}
-
-@Composable private fun Lbl(t: String) = Text(t, fontSize = 12.sp, color = LocalPal.current.mute)
-
-@Composable
-private fun <T> Seg(opts: List<Pair<T, String>>, sel: T, dim: (T) -> Boolean = { false }, onSel: (T) -> Unit) {
-    val pal = LocalPal.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        opts.forEach { (v, label) ->
-            val a = v == sel
-            val sh = RoundedCornerShape(10.dp)
-            Box(
-                Modifier.weight(1f).alpha(if (dim(v) && !a) 0.45f else 1f).clip(sh)
-                    .background(if (a) Accent else Color.Transparent)
-                    .border(1.dp, if (a) Accent else pal.line, sh)
-                    .clickable { onSel(v) }.padding(horizontal = 4.dp, vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(label, fontSize = 13.sp, textAlign = TextAlign.Center,
-                    color = if (a) OnAccent else pal.ink, fontWeight = if (a) FontWeight.Bold else FontWeight.Normal)
-            }
-        }
-    }
 }
