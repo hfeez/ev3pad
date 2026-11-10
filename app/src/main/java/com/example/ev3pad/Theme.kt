@@ -1,6 +1,7 @@
 package com.example.ev3pad
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -42,5 +43,10 @@ fun EV3Theme(content: @Composable () -> Unit) {
         primary = p.acc, onPrimary = p.onAcc, background = p.bg, surface = p.card, onSurface = p.ink, onBackground = p.ink,
         outline = p.line, onSurfaceVariant = p.mute, surfaceContainer = p.bg2, surfaceContainerHigh = p.bg2
     )
-    CompositionLocalProvider(LocalPal provides p) { MaterialTheme(colorScheme = scheme, content = content) }
+    CompositionLocalProvider(LocalPal provides p) {
+        MaterialTheme(colorScheme = scheme) {
+            // Warna teks bawaan: tanpa ini, teks tanpa warna eksplisit jatuh ke hitam dan tak terbaca di mode gelap.
+            CompositionLocalProvider(LocalContentColor provides p.ink, content = content)
+        }
+    }
 }

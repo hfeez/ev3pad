@@ -263,6 +263,7 @@ fun ModeCard(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit, onItem: (Long
                     fontSize = 12.5.sp, color = pal.mute, modifier = Modifier.weight(1f), maxLines = 1)
                 if (dirty && a != null) SmallBtn(tr("Simpan perubahan", "Save changes")) { vm.saveProfile(kind, a) }
                 SmallBtn(tr("Profil", "Profiles")) { onProfiles(kind) }
+                if (vm.tab == 1) SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
             }
             if (vm.tab == 0) PadSection(vm, Modifier.weight(1f).fillMaxWidth(), onKey)
             else VirtualSection(vm, Modifier.weight(1f).fillMaxWidth(), onItem)
@@ -304,7 +305,6 @@ private fun VirtualSection(vm: MainVm, modifier: Modifier, onItem: (Long) -> Uni
                     SmallBtn("+ Slider") { vm.addItem(VType.SLIDER) }
                     SmallBtn("+ Analog") { vm.addItem(VType.ANALOG) }
                 }
-                SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
             }
         }
         VirtualStage(vm, vm.edit, Modifier.weight(1f).fillMaxWidth(), onTap = onItem)
