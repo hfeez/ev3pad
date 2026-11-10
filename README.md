@@ -1,14 +1,19 @@
-# EV3 Pad (Android)
+# EV3 Direct Control (Android)
 
-Kontrol motor LEGO EV3 dengan controller PS4 lewat Android. Kotlin + Jetpack Compose.
+Kontrol motor LEGO EV3 lewat Bluetooth, dengan controller PS4 fisik atau controller virtual buatan sendiri.
+Kotlin + Jetpack Compose. Ikon launcher dari `icon_ev3_pad.svg`.
 
-## Cara build APK
-1. Pasang Android Studio (Hedgehog atau lebih baru), lalu **File > Open** folder `EV3Pad`.
-2. Tunggu Gradle sync selesai (butuh internet; JDK 17 sudah ikut Android Studio).
-3. **Build > Build APK(s)**. Hasil: `app/build/outputs/apk/debug/app-debug.apk`.
-4. Salin APK ke Infinix Note 30 Pro dan Huawei MatePad T10s, lalu izinkan "install dari sumber tidak dikenal".
+## Build APK
+- Lewat GitHub Actions: upload proyek ke GitHub, jalankan workflow **Build APK**, unduh artifact `EV3Pad-debug-apk`.
+- Atau Android Studio: **Build > Build APK(s)**.
 
-## Cara pakai
-1. Pasangkan EV3 di Pengaturan Bluetooth Android (nyalakan Bluetooth EV3, PIN 1234).
-2. Pasangkan PS4 (tahan tombol PS + Share sampai lampu berkedip cepat).
-3. Buka aplikasi, tekan **Hubungkan EV3**, pilih EV3, lalu ketuk tombol di gambar controller untuk mengatur motor.
+Catatan: APK debug dari GitHub Actions ditandatangani kunci debug yang berbeda tiap build. Jika Android menolak
+memperbarui aplikasi lama, uninstall dulu versi lama lalu pasang APK baru.
+
+## Pemakaian singkat
+1. Pasangkan EV3 (PIN 1234) dan PS4 di Pengaturan Bluetooth Android.
+2. Buka aplikasi, tekan **Hubungkan EV3**.
+3. Tab **Controller**: ketuk tombol di gambar untuk mengatur motor dan syarat sensor.
+4. Tab **Virtual**: mode **Edit** untuk menambah, memindah, dan mengubah ukuran tombol/slider/analog; mode **Kontrol** untuk memakainya.
+   Di mode Kontrol ada tombol **Layar penuh** (otomatis landscape, mode imersif).
+5. **Profil** menyimpan, memuat, mengganti nama, dan menghapus setelan (terpisah untuk Controller dan Virtual).

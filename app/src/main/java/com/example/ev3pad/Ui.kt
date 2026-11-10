@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -98,13 +99,14 @@ fun MainScreen(vm: MainVm) {
     var picker by remember { mutableStateOf(false) }
     var profKind by remember { mutableStateOf<String?>(null) }
     var settings by remember { mutableStateOf(false) }
+    var about by rememberSaveable { mutableStateOf(true) }   // tampil saat aplikasi dibuka
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     FullscreenEffects(vm.fullscreen)
     BackHandler(vm.fullscreen) { vm.fullscreen = false }
 
     Box(Modifier.fillMaxSize().background(pal.bg).drawBehind { glow(pal) }.safeDrawingPadding()) {
-        if (vm.fullscreen) FullscreenView(vm)
+        if (vm.fullscreen) FullscreenView(vm) { sheetItem = it }
         else Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.TopCenter) {
             if (land) {
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -125,7 +127,8 @@ fun MainScreen(vm: MainVm) {
     }
 
     if (picker) DevicePicker(vm.bonded(), onPick = { picker = false; vm.connect(it) }, onClose = { picker = false })
-    if (settings) SettingsDialog(vm) { settings = false }
+    if (settings) SettingsDialog(vm, onAbout = { settings = false; about = true }) { settings = false }
+    if (about) AboutDialog { about = false }
     profKind?.let { k -> ProfilesSheet(vm, k) { profKind = null } }
     sheetPad?.let { p ->
         KeySheet(
@@ -171,7 +174,12 @@ fun Header(vm: MainVm, onConnect: () -> Unit, onSettings: () -> Unit) {
                     LinkState.ON -> tr("Terhubung ke ", "Connected to ") + vm.ev3Name
                     LinkState.WAIT -> tr("Menghubungkan…", "Connecting…")
                     else -> tr("Belum terhubung", "Not connected")
-                }, fontSize = 12.sp, color = pal.mute, maxLines = 1)
+                }, fontSize = 12.sp, color = pal.mute, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                val bat = vm.battery
+                if (vm.ev3 == LinkState.ON && bat != null) {
+                    Spacer(Modifier.width(8.dp)); BatteryIcon(bat); Spacer(Modifier.width(4.dp))
+                    Text("$bat%", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = pal.mute)
+                }
             }
         }
         OutlinedButton(onClick = onSettings, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(40.dp)) { Text("⚙", fontSize = 18.sp, color = pal.ink) }
@@ -295,13 +303,14 @@ private fun VirtualSection(vm: MainVm, modifier: Modifier, onItem: (Long) -> Uni
                     SmallBtn(tr("+ Tombol", "+ Button")) { vm.addItem(VType.BTN) }
                     SmallBtn("+ Slider") { vm.addItem(VType.SLIDER) }
                     SmallBtn("+ Analog") { vm.addItem(VType.ANALOG) }
-                } else SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
+                }
+                SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
             }
         }
-        VirtualStage(vm, vm.edit, Modifier.weight(1f).fillMaxWidth(), onItem)
+        VirtualStage(vm, vm.edit, Modifier.weight(1f).fillMaxWidth(), onTap = onItem)
         Text(
-            if (vm.edit) tr("Seret untuk memindah, tarik titik di pojok untuk mengubah ukuran, ketuk untuk mengatur.",
-                "Drag to move, pull the corner dot to resize, tap to configure.")
+            if (vm.edit) tr("Seret untuk memindah, tarik titik di pojok untuk mengubah ukuran, ketuk untuk mengatur. Di HP, pakai ⛶ untuk mengedit di layar penuh.",
+                "Drag to move, pull the corner dot to resize, tap to configure. On phones, use ⛶ to edit in fullscreen.")
             else tr("Mode kontrol: sentuh elemen untuk menggerakkan motor. Elemen redup = terkunci oleh syarat sensor.",
                 "Control mode: touch elements to drive motors. A dimmed element is locked by a sensor condition."),
             fontSize = 12.sp, color = pal.mute
@@ -395,7 +404,7 @@ fun DevicePicker(devs: List<BluetoothDevice>, onPick: (BluetoothDevice) -> Unit,
 }
 
 @Composable
-fun SettingsDialog(vm: MainVm, onClose: () -> Unit) {
+fun SettingsDialog(vm: MainVm, onAbout: () -> Unit, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(tr("Pengaturan", "Settings")) },
@@ -403,6 +412,8 @@ fun SettingsDialog(vm: MainVm, onClose: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Lbl(tr("Bahasa", "Language"))
                 Seg(listOf("id" to "Indonesia", "en" to "English"), Lang.code) { vm.setLang(it) }
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About this app", color = LocalPal.current.ink) }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text(tr("Tutup", "Close")) } }

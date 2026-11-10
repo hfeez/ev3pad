@@ -24,6 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
@@ -45,17 +47,22 @@ import androidx.core.view.WindowInsetsControllerCompat
 import kotlin.math.hypot
 
 /**
- * Panggung virtual berukuran logis STAGE_W x STAGE_H, diskalakan seragam agar muat di area yang tersedia.
- * Karena skala seragam, layout yang sama tampil identik di HP maupun tablet, dan analog tetap lingkaran.
+ * Panggung virtual: tinggi logis tetap (STAGE_H), lebar menyesuaikan rasio area (minimal MIN_STAGE_W).
+ * Skala seragam, jadi analog tetap lingkaran, panggung memenuhi layar HP yang memanjang, dan posisi elemen
+ * memakai jangkar kiri/kanan sehingga layout tetap rapi di berbagai ukuran layar.
  */
 @Composable
-fun VirtualStage(vm: MainVm, edit: Boolean, modifier: Modifier, onTap: (Long) -> Unit) {
+fun VirtualStage(vm: MainVm, edit: Boolean, modifier: Modifier, fill: Boolean = false, onTap: (Long) -> Unit) {
     val pal = LocalPal.current
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        val scale = minOf(maxWidth.value / STAGE_W, maxHeight.value / STAGE_H).coerceAtLeast(0.1f)
-        val shape = RoundedCornerShape(14.dp)
+        val aw = maxWidth.value; val ah = maxHeight.value
+        val scale = minOf(ah / STAGE_H, aw / MIN_STAGE_W).coerceAtLeast(0.1f)
+        val ws = aw / scale
+        SideEffect { vm.stageW = ws }
+        val shape = RoundedCornerShape(if (fill) 0.dp else 14.dp)
         Box(
-            Modifier.size((STAGE_W * scale).dp, (STAGE_H * scale).dp).clip(shape).border(1.dp, pal.line, shape)
+            Modifier.size(aw.dp, (STAGE_H * scale).dp).clip(shape)
+                .then(if (fill) Modifier else Modifier.border(1.dp, pal.line, shape))
                 .then(if (edit) Modifier.drawBehind {
                     val st = 16f * scale * density
                     var x = st
@@ -66,7 +73,7 @@ fun VirtualStage(vm: MainVm, edit: Boolean, modifier: Modifier, onTap: (Long) ->
                     }
                 } else Modifier)
         ) {
-            vm.items.forEach { item -> key(item.id) { VItemView(vm, item, scale, edit, onTap) } }
+            vm.items.forEach { item -> key(item.id) { VItemView(vm, item, scale, ws, edit, onTap) } }
             if (vm.items.isEmpty()) Text(
                 tr("Belum ada elemen. Ketuk + Tombol, + Slider, atau + Analog.", "No elements yet. Tap + Button, + Slider, or + Analog."),
                 color = pal.mute, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(24.dp)
@@ -76,16 +83,18 @@ fun VirtualStage(vm: MainVm, edit: Boolean, modifier: Modifier, onTap: (Long) ->
 }
 
 @Composable
-private fun VItemView(vm: MainVm, item: VItem, scale: Float, edit: Boolean, onTap: (Long) -> Unit) {
+private fun VItemView(vm: MainVm, item: VItem, scale: Float, ws: Float, edit: Boolean, onTap: (Long) -> Unit) {
     val pal = LocalPal.current
     val dens = LocalDensity.current.density
     val itemState = rememberUpdatedState(item)
     val input = vm.vin[item.id] ?: VIn()
     val on = item.type == VType.BTN && (if (item.cfg.toggle) item.id in vm.vToggle else input.down)
     val blocked = !vm.passes(item.cfg)
+    val left = (if (item.ar) ws - item.x - item.w else item.x).coerceIn(0f, maxOf(0f, ws - item.w))
+    val top = item.y.coerceIn(0f, maxOf(0f, STAGE_H - item.h))
 
     Box(
-        Modifier.offset((item.x * scale).dp, (item.y * scale).dp).size((item.w * scale).dp, (item.h * scale).dp)
+        Modifier.offset((left * scale).dp, (top * scale).dp).size((item.w * scale).dp, (item.h * scale).dp)
             .alpha(if (blocked && !edit) 0.35f else 1f)
             .then(
                 if (edit) Modifier
@@ -192,14 +201,21 @@ private suspend fun PointerInputScope.controlGesture(vm: MainVm, itemState: Stat
 // ===================== layar penuh =====================
 
 @Composable
-fun FullscreenView(vm: MainVm) {
+fun FullscreenView(vm: MainVm, onItem: (Long) -> Unit) {
     val pal = LocalPal.current
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().background(pal.bg2).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().background(pal.bg2).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                 val on = vm.ev3 == LinkState.ON
+                if (vm.edit) {
+                    SmallBtn(tr("+ Tombol", "+ Button")) { vm.addItem(VType.BTN) }
+                    SmallBtn("+ Slider") { vm.addItem(VType.SLIDER) }
+                    SmallBtn("+ Analog") { vm.addItem(VType.ANALOG) }
+                }
                 MiniChip("EV3", "", dot = if (on) pal.ok else pal.bad)
-                if (on) {
+                val b = vm.battery
+                if (on && b != null) BatteryChip(b)
+                if (on && !vm.edit) {
                     for (i in 0..3) if (vm.motorPorts[i] != null) {
                         val sp = vm.speeds[i]
                         MiniChip("ABCD"[i].toString(), (if (sp > 0) "+" else "") + "$sp%", hot = sp != 0)
@@ -211,12 +227,14 @@ fun FullscreenView(vm: MainVm) {
                 }
             }
             Spacer(Modifier.width(8.dp))
+            Box(Modifier.width(150.dp)) { Seg(listOf(true to "✎ Edit", false to tr("▶ Kontrol", "▶ Control")), vm.edit) { vm.changeEdit(it) } }
+            Spacer(Modifier.width(8.dp))
             Box(Modifier.size(30.dp).clip(CircleShape).border(1.dp, pal.line, CircleShape).clickable { vm.fullscreen = false }, contentAlignment = Alignment.Center) {
                 Text("✕", fontSize = 13.sp)
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
-        VirtualStage(vm, false, Modifier.weight(1f).fillMaxWidth().padding(8.dp)) { }
+        VirtualStage(vm, vm.edit, Modifier.weight(1f).fillMaxWidth(), fill = true, onTap = onItem)
     }
 }
 
@@ -253,5 +271,31 @@ fun FullscreenEffects(on: Boolean) {
                 view.keepScreenOn = false
             }
         }
+    }
+}
+
+/** Ikon baterai kecil; warna mengikuti level (hijau, kuning, merah). */
+@Composable
+fun BatteryIcon(pct: Int, modifier: Modifier = Modifier) {
+    val pal = LocalPal.current
+    val c = when { pct <= 15 -> pal.bad; pct <= 40 -> Color(0xFFFFC53D); else -> pal.ok }
+    Canvas(modifier.size(22.dp, 12.dp)) {
+        val w = size.width; val h = size.height; val nub = w * 0.1f; val bw = w - nub
+        drawRoundRect(pal.mute, size = Size(bw, h), cornerRadius = CornerRadius(h * 0.25f), style = Stroke(1.6f * density))
+        val inset = 2.4f * density
+        val fw = (bw - 2 * inset) * pct.coerceIn(0, 100) / 100f
+        drawRoundRect(c, Offset(inset, inset), Size(fw, h - 2 * inset), CornerRadius(h * 0.12f))
+        drawRoundRect(pal.mute, Offset(bw + 0.5f * density, h * 0.3f), Size(nub - 0.5f * density, h * 0.4f), CornerRadius(1f * density))
+    }
+}
+
+@Composable
+private fun BatteryChip(pct: Int) {
+    val pal = LocalPal.current
+    val sh = RoundedCornerShape(99.dp)
+    Row(Modifier.clip(sh).border(1.dp, pal.ok.copy(alpha = 0.4f), sh).padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        BatteryIcon(pct)
+        Spacer(Modifier.width(5.dp))
+        Text("$pct%", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = pal.ink, maxLines = 1)
     }
 }

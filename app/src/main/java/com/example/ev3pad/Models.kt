@@ -5,8 +5,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Ukuran panggung virtual (satuan logis). Semua posisi elemen virtual memakai satuan ini, lalu diskalakan seragam ke layar. */
-const val STAGE_W = 640f
+/** Tinggi panggung virtual (satuan logis). Lebar menyesuaikan rasio layar (minimal MIN_STAGE_W), jadi panggung selalu memenuhi area. */
 const val STAGE_H = 360f
+const val MIN_STAGE_W = 400f
+/** Lebar panggung versi lama, hanya dipakai untuk migrasi layout lama. */
+const val STAGE_W = 640f
 
 enum class Kind { BTN, TRIG, STICK, SLIDER, ANALOG }
 
@@ -56,7 +59,9 @@ data class KeyCfg(
 
 enum class VType { BTN, SLIDER, ANALOG }
 
-data class VItem(val id: Long, val type: VType, val name: String, val x: Float, val y: Float, val w: Float, val h: Float, val cfg: KeyCfg) {
+data class VItem(val id: Long, val type: VType, val name: String, val x: Float, val y: Float, val w: Float, val h: Float, val cfg: KeyCfg,
+                 /** x = jarak dari tepi (kiri, atau kanan jika ar=true) agar layout menyesuaikan lebar layar. */
+                 val ar: Boolean = false) {
     val kind: Kind get() = when (type) { VType.BTN -> Kind.BTN; VType.SLIDER -> Kind.SLIDER; VType.ANALOG -> Kind.ANALOG }
 }
 
@@ -124,7 +129,7 @@ object Store {
         l.forEach {
             a.put(JSONObject().put("i", it.id).put("t", it.type.name).put("n", it.name)
                 .put("x", it.x.toDouble()).put("y", it.y.toDouble()).put("w", it.w.toDouble()).put("h", it.h.toDouble())
-                .put("c", cfgJson(it.cfg)))
+                .put("c", cfgJson(it.cfg)).put("a", it.ar))
         }
         return a
     }
@@ -137,7 +142,9 @@ object Store {
                 val t = VType.valueOf(o.getString("t"))
                 var w = o.getDouble("w").toFloat(); var h = o.getDouble("h").toFloat()
                 if (t == VType.ANALOG) { val s = minOf(w, h); w = s; h = s }   // analog selalu lingkaran
-                r.add(VItem(o.getLong("i"), t, o.getString("n"), o.getDouble("x").toFloat(), o.getDouble("y").toFloat(), w, h, cfgFrom(o.getJSONObject("c"))))
+                var x = o.getDouble("x").toFloat(); var ar = o.optBoolean("a", false)
+                if (!o.has("a") && x + w / 2f > STAGE_W / 2f) { ar = true; x = STAGE_W - x - w }   // layout lama -> jangkar sisi terdekat
+                r.add(VItem(o.getLong("i"), t, o.getString("n"), x, o.getDouble("y").toFloat(), w, h, cfgFrom(o.getJSONObject("c")), ar))
             } catch (e: Exception) { }
         }
         return r
@@ -172,6 +179,9 @@ object Store {
                 for (k in o.keys()) {
                     val a = o.getJSONArray(k); val m = LinkedHashMap<String, String>()
                     for (i in 0 until a.length()) { val e = a.getJSONObject(i); m[e.getString("n")] = e.getString("j") }
+                    if (k == "virt") for (key in m.keys.toList()) {
+                        m[key] = try { itemsToJson(itemsFromJson(JSONArray(m[key]))).toString() } catch (e: Exception) { m[key]!! }
+                    }
                     r[k] = m
                 }
             } else {

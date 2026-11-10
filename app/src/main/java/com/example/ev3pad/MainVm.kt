@@ -49,12 +49,15 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
     var sensorModes by mutableStateOf<List<Int>>(List(4) { 0 }); private set          // jenis ukuran yang ditampilkan
     var sensorData by mutableStateOf<List<Map<String, Float>>>(List(4) { emptyMap() }); private set
     var speeds by mutableStateOf<List<Int>>(List(4) { 0 }); private set               // persen kecepatan terkirim
+    var battery by mutableStateOf<Int?>(null); private set                             // persen baterai EV3
 
     // ---- input ----
     var padOn by mutableStateOf(false); private set
     var vin by mutableStateOf<Map<Long, VIn>>(emptyMap()); private set
     var vToggle by mutableStateOf<Set<Long>>(emptySet()); private set
     @Volatile private var snap = PadSnap()
+    /** Lebar panggung virtual saat ini; diisi oleh UI (VirtualStage). */
+    @Volatile var stageW: Float = STAGE_W
 
     private var link: Ev3Link? = null
     private var loop: Job? = null
@@ -82,47 +85,57 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
     private fun saveItems() = Store.saveItems(prefs, items)
 
     fun addItem(t: VType): Long {
+        val ws = stageW
         val id = (items.maxOfOrNull { it.id } ?: 0L) + 1
         val n = items.size
         val (w, h) = when (t) { VType.BTN -> 90f to 90f; VType.SLIDER -> 240f to 64f; VType.ANALOG -> 150f to 150f }
         val base = when (t) { VType.BTN -> tr("Tombol", "Button"); VType.SLIDER -> "Slider"; VType.ANALOG -> "Analog" }
         val off = 24f + 16f * (n % 6)
         val cfg = KeyCfg(motors = listOf(Motor(speed = if (t == VType.BTN) SpeedMode.FIXED else SpeedMode.PROP)))
-        items = items + VItem(id, t, "$base ${n + 1}", off.coerceAtMost(STAGE_W - w), off.coerceAtMost(STAGE_H - h), w, h, cfg)
+        items = items + VItem(id, t, "$base ${n + 1}", off.coerceAtMost(maxOf(0f, ws - w)), off.coerceAtMost(STAGE_H - h), w, h, cfg)
         saveItems()
         return id
     }
 
     fun moveItem(id: Long, dx: Float, dy: Float) {
+        val ws = stageW
         items = items.map {
             if (it.id != id) it else it.copy(
-                x = (it.x + dx).coerceIn(0f, maxOf(0f, STAGE_W - it.w)),
+                x = (it.x + (if (it.ar) -dx else dx)).coerceIn(0f, maxOf(0f, ws - it.w)),
                 y = (it.y + dy).coerceIn(0f, maxOf(0f, STAGE_H - it.h))
             )
         }
     }
 
     fun resizeItem(id: Long, dw: Float, dh: Float) {
+        val ws = stageW
         items = items.map {
-            if (it.id != id) it
-            else if (it.type == VType.ANALOG) {      // analog dipertahankan lingkaran
-                val mx = maxOf(72f, minOf(STAGE_W - it.x, STAGE_H - it.y))
-                val s = (it.w + (dw + dh) / 2f).coerceIn(72f, mx)
-                it.copy(w = s, h = s)
-            } else it.copy(
-                w = (it.w + dw).coerceIn(56f, maxOf(56f, STAGE_W - it.x)),
-                h = (it.h + dh).coerceIn(56f, maxOf(56f, STAGE_H - it.y))
-            )
+            if (it.id != id) it else {
+                val left = if (it.ar) ws - it.x - it.w else it.x
+                val maxW = maxOf(56f, ws - left); val maxH = maxOf(56f, STAGE_H - it.y)
+                if (it.type == VType.ANALOG) {      // analog dipertahankan lingkaran
+                    val s = (it.w + (dw + dh) / 2f).coerceIn(72f, maxOf(72f, minOf(maxW, maxH)))
+                    it.copy(w = s, h = s, x = if (it.ar) ws - left - s else it.x)
+                } else {
+                    val w = (it.w + dw).coerceIn(56f, maxW); val h = (it.h + dh).coerceIn(56f, maxH)
+                    it.copy(w = w, h = h, x = if (it.ar) ws - left - w else it.x)
+                }
+            }
         }
     }
 
-    /** Rapikan ke grid 8 satuan setelah geser/resize, lalu simpan. */
+    /** Rapikan ke grid 8 satuan setelah geser/resize, pilih jangkar kiri/kanan terdekat, lalu simpan. */
     fun snapItem(id: Long) {
+        val ws = stageW
         fun g(v: Float) = (v / 8f).roundToInt() * 8f
         items = items.map {
             if (it.id != id) it else {
-                val w = g(it.w).coerceAtLeast(56f); val h = if (it.type == VType.ANALOG) w else g(it.h).coerceAtLeast(56f)
-                it.copy(w = w, h = h, x = g(it.x).coerceIn(0f, maxOf(0f, STAGE_W - w)), y = g(it.y).coerceIn(0f, maxOf(0f, STAGE_H - h)))
+                val w = g(it.w).coerceAtLeast(if (it.type == VType.ANALOG) 72f else 56f)
+                val h = if (it.type == VType.ANALOG) w else g(it.h).coerceAtLeast(56f)
+                val left0 = if (it.ar) ws - it.x - it.w else it.x
+                val left = g(left0).coerceIn(0f, maxOf(0f, ws - w)); val top = g(it.y).coerceIn(0f, maxOf(0f, STAGE_H - h))
+                val ar = left + w / 2f > ws / 2f
+                it.copy(w = w, h = h, y = top, ar = ar, x = if (ar) ws - left - w else left)
             }
         }
         saveItems()
@@ -266,7 +279,7 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
 
     private fun resetPorts() {
         motorPorts = List(4) { null }; sensorPorts = List(4) { null }
-        sensorData = List(4) { emptyMap() }; speeds = List(4) { 0 }
+        sensorData = List(4) { emptyMap() }; speeds = List(4) { 0 }; battery = null
     }
 
     fun disconnect() {
@@ -344,6 +357,7 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
             var prevV = emptySet<Long>()
             var lastPorts = System.currentTimeMillis()
             var lastSens = 0L
+            var lastBatt = 0L
             try {
                 while (isActive) {
                     val s = snap; val cfg = map; val pressed = s.pressed
@@ -388,6 +402,7 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
                     val now = System.currentTimeMillis()
                     if (now - lastPorts > 3000) { applyTypes(l.readTypes()); lastPorts = now }
                     if (now - lastSens > 250) { readSens(l); lastSens = now }
+                    if (now - lastBatt > 10000) { battery = l.readBattery(); lastBatt = now }
                     delay(40)
                 }
             } catch (e: Exception) {

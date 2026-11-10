@@ -86,6 +86,12 @@ class Ev3Link(private val dev: BluetoothDevice) {
         }
     }
 
+    /** Level baterai EV3 dalam persen (opUI_Read GET_LBATT), atau null jika gagal. */
+    fun readBattery(): Int? {
+        val d = query(byteArrayOf(0x81.toByte(), 0x12, 0x60), 1)
+        return if (d.size > 3 && d[2].toInt() == 2) (d[3].toInt() and 0xFF).coerceIn(0, 100) else null
+    }
+
     companion object {
         private fun lc(v: Int): ByteArray =
             if (v in -32..31) byteArrayOf((v and 0x3F).toByte()) else byteArrayOf(0x81.toByte(), v.toByte())
