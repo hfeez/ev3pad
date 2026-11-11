@@ -315,7 +315,7 @@ private fun NoPad() {
             drawLine(pal.bad, Offset(8f, 8f), Offset(size.width - 8f, size.height - 8f), strokeWidth = 18f, cap = StrokeCap.Round)
             drawLine(pal.bad, Offset(size.width - 8f, 8f), Offset(8f, size.height - 8f), strokeWidth = 18f, cap = StrokeCap.Round)
         }
-        Text(tr("Controller PS4 belum terhubung", "PS4 controller not connected"), fontSize = 14.sp,
+        Text(tr("Controller belum terhubung", "Controller not connected"), fontSize = 14.sp,
             modifier = Modifier.background(pal.bg2, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
     }
 }
