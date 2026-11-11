@@ -261,9 +261,9 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
         ctype = when (ctypePref) { "ds4" -> CType.DS4; "xbox" -> CType.XBOX; "joycon" -> CType.JOYCON; else -> detected }
     }
 
-    fun setCtypePref(p: String) { ctypePref = p; prefs.edit().putString("ctype", p).apply(); applyType() }
+    fun chooseCtype(p: String) { ctypePref = p; prefs.edit().putString("ctype", p).apply(); applyType() }
 
-    fun setTestMode(b: Boolean) { testMode = b; if (!b) { snap = PadSnap(); pushPad() } }
+    fun changeTestMode(b: Boolean) { testMode = b; if (!b) { snap = PadSnap(); pushPad() } }
 
     /** Posisi stik dari mode uji (sentuhan pada gambar). */
     fun testStick(pad: Pad, x: Float, y: Float) {

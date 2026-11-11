@@ -250,7 +250,7 @@ private fun PadSection(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.width(190.dp)) {
-                Seg(listOf(false to tr("Atur", "Configure"), true to tr("Uji input", "Test input")), vm.testMode) { vm.setTestMode(it) }
+                Seg(listOf(false to tr("Atur", "Configure"), true to tr("Uji input", "Test input")), vm.testMode) { vm.changeTestMode(it) }
             }
             val sh = RoundedCornerShape(99.dp)
             Row(Modifier.clip(sh).border(1.dp, pal.line, sh).padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -350,7 +350,7 @@ fun SettingsDialog(vm: MainVm, onAbout: () -> Unit, onClose: () -> Unit) {
                 Seg(listOf("id" to "Indonesia", "en" to "English"), Lang.code) { vm.setLang(it) }
                 Spacer(Modifier.height(2.dp))
                 Lbl(tr("Jenis controller", "Controller type"))
-                Seg(listOf("auto" to tr("Otomatis", "Auto"), "ds4" to "DualShock", "xbox" to "Xbox", "joycon" to "Joy-Con"), vm.ctypePref) { vm.setCtypePref(it) }
+                Seg(listOf("auto" to tr("Otomatis", "Auto"), "ds4" to "DualShock", "xbox" to "Xbox", "joycon" to "Joy-Con"), vm.ctypePref) { vm.chooseCtype(it) }
                 Spacer(Modifier.height(4.dp))
                 OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About this app", color = LocalPal.current.ink) }
             }
