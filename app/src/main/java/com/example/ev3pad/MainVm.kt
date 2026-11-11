@@ -5,6 +5,9 @@ import android.app.Application
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.hardware.BatteryState
+import android.os.Build
+import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +56,15 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
 
     // ---- input ----
     var padOn by mutableStateOf(false); private set
+    var ctype by mutableStateOf(CType.DS4); private set                                // jenis controller aktif
+    var ctypePref by mutableStateOf(prefs.getString("ctype", "auto") ?: "auto"); private set
+    var padBat by mutableStateOf<Int?>(null); private set                              // baterai controller (Android 12+)
+    var padChg by mutableStateOf(false); private set
+    var padKeys by mutableStateOf<Set<Pad>>(emptySet()); private set                   // tombol yang sedang ditekan (untuk gambar)
+    var padAx by mutableStateOf(Axes()); private set
+    var testMode by mutableStateOf(false); private set
+    private var detected = CType.DS4
+    private var padDevId = -1
     var vin by mutableStateOf<Map<Long, VIn>>(emptyMap()); private set
     var vToggle by mutableStateOf<Set<Long>>(emptySet()); private set
     @Volatile private var snap = PadSnap()
@@ -229,9 +241,47 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
     }
 
     // ===================== input controller fisik =====================
-    fun setPad(on: Boolean) { padOn = on; if (!on) snap = PadSnap() }
+    private fun pushPad() {
+        val s = snap
+        if (padKeys != s.pressed) padKeys = s.pressed
+        val a = Axes(s.lx, s.ly, s.rx, s.ry, s.l2, s.r2)
+        if (padAx != a) padAx = a
+    }
 
-    fun key(p: Pad, down: Boolean) { snap = snap.copy(keys = if (down) snap.keys + p else snap.keys - p) }
+    fun setPad(on: Boolean, dev: InputDevice? = null) {
+        padOn = on
+        if (!on) {
+            snap = PadSnap(); pushPad(); padBat = null; padDevId = -1; testMode = false
+        } else if (dev != null) {
+            padDevId = dev.id; detected = ctypeOf(dev); applyType(); refreshBattery()
+        }
+    }
+
+    private fun applyType() {
+        ctype = when (ctypePref) { "ds4" -> CType.DS4; "xbox" -> CType.XBOX; "joycon" -> CType.JOYCON; else -> detected }
+    }
+
+    fun setCtypePref(p: String) { ctypePref = p; prefs.edit().putString("ctype", p).apply(); applyType() }
+
+    fun setTestMode(b: Boolean) { testMode = b; if (!b) { snap = PadSnap(); pushPad() } }
+
+    /** Posisi stik dari mode uji (sentuhan pada gambar). */
+    fun testStick(pad: Pad, x: Float, y: Float) {
+        snap = if (pad == Pad.LS) snap.copy(lx = x, ly = y) else snap.copy(rx = x, ry = y)
+        pushPad()
+    }
+
+    /** Baterai controller: tersedia lewat InputDevice.getBatteryState() di Android 12 (API 31) ke atas. */
+    fun refreshBattery() {
+        if (Build.VERSION.SDK_INT < 31 || padDevId < 0) { padBat = null; return }
+        val bs = InputDevice.getDevice(padDevId)?.batteryState
+        if (bs == null || !bs.isPresent) { padBat = null; return }
+        val c = bs.capacity
+        padBat = if (c.isNaN()) null else (c * 100f).roundToInt().coerceIn(0, 100)
+        padChg = bs.status == BatteryState.STATUS_CHARGING
+    }
+
+    fun key(p: Pad, down: Boolean) { snap = snap.copy(keys = if (down) snap.keys + p else snap.keys - p); pushPad() }
 
     fun motion(e: MotionEvent) {
         fun ax(a: Int) = e.getAxisValue(a)
@@ -247,6 +297,7 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
             l2 = maxOf(ax(MotionEvent.AXIS_LTRIGGER), ax(MotionEvent.AXIS_BRAKE), ax(MotionEvent.AXIS_RX)).coerceIn(0f, 1f),
             r2 = maxOf(ax(MotionEvent.AXIS_RTRIGGER), ax(MotionEvent.AXIS_GAS), ax(MotionEvent.AXIS_RY)).coerceIn(0f, 1f)
         )
+        pushPad()
     }
 
     // ===================== koneksi EV3 =====================
@@ -445,5 +496,15 @@ class MainVm(private val app: Application) : AndroidViewModel(app) {
         if (a < dz) return 0f
         val o = if (sp == SpeedMode.PROP) ((a - dz) / (1f - dz)).coerceAtMost(1f) else 1f
         return o * sign(v)
+    }
+}
+
+/** Deteksi jenis controller dari ID produsen dan nama perangkat. */
+fun ctypeOf(d: InputDevice): CType {
+    val n = (d.name ?: "").lowercase()
+    return when {
+        d.vendorId == 0x045E || "xbox" in n || "microsoft" in n -> CType.XBOX
+        d.vendorId == 0x057E || "joy-con" in n || "joycon" in n || "nintendo" in n || "pro controller" in n -> CType.JOYCON
+        else -> CType.DS4   // Sony (0x054C), "Wireless Controller", dan controller lain
     }
 }

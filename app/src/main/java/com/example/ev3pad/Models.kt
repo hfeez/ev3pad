@@ -68,6 +68,26 @@ data class VItem(val id: Long, val type: VType, val name: String, val x: Float, 
 /** Masukan satu elemen virtual: down = disentuh, x/y = -1..1. */
 data class VIn(val down: Boolean = false, val x: Float = 0f, val y: Float = 0f)
 
+/** Posisi stik dan trigger (untuk menggambar controller). */
+data class Axes(val lx: Float = 0f, val ly: Float = 0f, val rx: Float = 0f, val ry: Float = 0f, val l2: Float = 0f, val r2: Float = 0f)
+
+/** Nama tombol sesuai jenis controller (posisi sama, nama berbeda). */
+fun Pad.labelFor(t: CType): String = when (t) {
+    CType.XBOX -> when (this) {
+        Pad.L2 -> "LT"; Pad.R2 -> "RT"; Pad.L1 -> "LB"; Pad.R1 -> "RB"
+        Pad.TRI -> "Y"; Pad.CRS -> "A"; Pad.SQR -> "X"; Pad.CIR -> "B"
+        Pad.SHARE -> "View"; Pad.OPT -> "Menu"; Pad.PS -> tr("Tombol Xbox", "Xbox button"); Pad.TP -> "Share"
+        else -> label
+    }
+    CType.JOYCON -> when (this) {
+        Pad.L2 -> "ZL"; Pad.R2 -> "ZR"; Pad.L1 -> "L"; Pad.R1 -> "R"
+        Pad.TRI -> "X"; Pad.CRS -> "B"; Pad.SQR -> "Y"; Pad.CIR -> "A"
+        Pad.SHARE -> "Minus (−)"; Pad.OPT -> "Plus (+)"; Pad.PS -> "Home"; Pad.TP -> "Capture"
+        else -> label
+    }
+    else -> label
+}
+
 /** Snapshot input controller fisik; dibaca oleh loop pengirim ke EV3. */
 data class PadSnap(
     val keys: Set<Pad> = emptySet(),

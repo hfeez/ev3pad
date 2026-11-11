@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -51,41 +52,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private const val PW = 360f
-private const val PH = 250f
-
-sealed class KShape
-class RectS(val x: Float, val y: Float, val w: Float, val h: Float, val r: Float) : KShape()
-class CircS(val x: Float, val y: Float, val r: Float) : KShape()
-
-private val KEYS: List<Triple<Pad, KShape, String>> = listOf(
-    Triple(Pad.L2, RectS(48f, 14f, 64f, 20f, 8f), "L2"),
-    Triple(Pad.R2, RectS(248f, 14f, 64f, 20f, 8f), "R2"),
-    Triple(Pad.L1, RectS(48f, 38f, 64f, 16f, 8f), "L1"),
-    Triple(Pad.R1, RectS(248f, 38f, 64f, 16f, 8f), "R1"),
-    Triple(Pad.TP, RectS(135f, 62f, 90f, 46f, 10f), "Touchpad"),
-    Triple(Pad.SHARE, RectS(108f, 68f, 18f, 12f, 5f), ""),
-    Triple(Pad.OPT, RectS(234f, 68f, 18f, 12f, 5f), ""),
-    Triple(Pad.UP, RectS(82f, 76f, 26f, 26f, 6f), "▲"),
-    Triple(Pad.DOWN, RectS(82f, 126f, 26f, 26f, 6f), "▼"),
-    Triple(Pad.LEFT, RectS(57f, 101f, 26f, 26f, 6f), "◀"),
-    Triple(Pad.RIGHT, RectS(107f, 101f, 26f, 26f, 6f), "▶"),
-    Triple(Pad.TRI, CircS(265f, 88f, 14f), "△"),
-    Triple(Pad.CRS, CircS(265f, 140f, 14f), "✕"),
-    Triple(Pad.SQR, CircS(239f, 114f, 14f), "□"),
-    Triple(Pad.CIR, CircS(291f, 114f, 14f), "○"),
-    Triple(Pad.PS, CircS(180f, 135f, 9f), ""),
-    Triple(Pad.LS, CircS(130f, 180f, 28f), ""),
-    Triple(Pad.RS, CircS(230f, 180f, 28f), ""),
-    Triple(Pad.L3, CircS(130f, 180f, 10f), "L3"),
-    Triple(Pad.R3, CircS(230f, 180f, 10f), "R3"),
-)
-
-private fun hit(s: KShape, x: Float, y: Float): Boolean = when (s) {
-    is RectS -> x in (s.x - 6f)..(s.x + s.w + 6f) && y in (s.y - 6f)..(s.y + s.h + 6f)
-    is CircS -> (x - s.x) * (x - s.x) + (y - s.y) * (y - s.y) <= (s.r + 6f) * (s.r + 6f)
-}
-
 private fun DrawScope.glow(p: Pal) {
     drawRect(Brush.radialGradient(listOf(p.acc.copy(alpha = 0.13f), Color.Transparent), center = Offset(size.width * 0.1f, 0f), radius = size.width * 0.75f))
     drawRect(Brush.radialGradient(listOf(p.acc2.copy(alpha = 0.13f), Color.Transparent), center = Offset(size.width, 0f), radius = size.width * 0.7f))
@@ -103,6 +69,7 @@ fun MainScreen(vm: MainVm) {
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     FullscreenEffects(vm.fullscreen)
+    LaunchedEffect(vm.padOn) { while (vm.padOn) { vm.refreshBattery(); delay(5000) } }
     BackHandler(vm.fullscreen) { vm.fullscreen = false }
 
     Box(Modifier.fillMaxSize().background(pal.bg).drawBehind { glow(pal) }.safeDrawingPadding()) {
@@ -132,7 +99,7 @@ fun MainScreen(vm: MainVm) {
     profKind?.let { k -> ProfilesSheet(vm, k) { profKind = null } }
     sheetPad?.let { p ->
         KeySheet(
-            title = p.label, kind = p.kind, initial = vm.map[p], vm = vm, nameInit = null,
+            title = p.labelFor(vm.ctype), kind = p.kind, initial = vm.map[p], vm = vm, nameInit = null,
             deleteLabel = tr("Hapus pengaturan", "Clear settings"),
             onSave = { c, _ -> vm.saveKey(p, c); sheetPad = null },
             onDelete = { vm.saveKey(p, null); sheetPad = null },
@@ -262,6 +229,11 @@ fun ModeCard(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit, onItem: (Long
                 else tr("Belum ada profil aktif", "No active profile"),
                     fontSize = 12.5.sp, color = pal.mute, modifier = Modifier.weight(1f), maxLines = 1)
                 if (dirty && a != null) SmallBtn(tr("Simpan perubahan", "Save changes")) { vm.saveProfile(kind, a) }
+                val pb = vm.padBat
+                if (vm.padOn && pb != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BatteryIcon(pb, charging = vm.padChg)
+                    Text("$pb%", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = pal.mute)
+                }
                 SmallBtn(tr("Profil", "Profiles")) { onProfiles(kind) }
                 if (vm.tab == 1) SmallBtn(tr("⛶ Layar penuh", "⛶ Fullscreen")) { vm.fullscreen = true }
             }
@@ -274,11 +246,28 @@ fun ModeCard(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit, onItem: (Long
 @Composable
 private fun PadSection(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit) {
     val pal = LocalPal.current
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    val skin = remember(vm.ctype) { skinFor(vm.ctype) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.width(190.dp)) {
+                Seg(listOf(false to tr("Atur", "Configure"), true to tr("Uji input", "Test input")), vm.testMode) { vm.setTestMode(it) }
+            }
+            val sh = RoundedCornerShape(99.dp)
+            Row(Modifier.clip(sh).border(1.dp, pal.line, sh).padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).background(if (vm.padOn) pal.ok else pal.bad, CircleShape))
+                Spacer(Modifier.width(6.dp))
+                Text(if (vm.padOn) vm.ctype.title() else "–", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace, color = pal.mute, maxLines = 1)
+            }
+            Text(
+                if (vm.testMode) tr("Tahan tombol atau geser stik untuk mencoba", "Hold a button or drag a stick to try")
+                else tr("Ketuk tombol untuk membuka pengaturan", "Tap a button to open its settings"),
+                fontSize = 12.sp, color = pal.mute, modifier = Modifier.weight(1f), maxLines = 2
+            )
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val w = minOf(maxWidth, maxHeight * (PW / PH))
+            val w = minOf(maxWidth, maxHeight * (skin.vw / skin.vh))
             Box(Modifier.width(w), contentAlignment = Alignment.Center) {
-                ControllerView(Modifier.fillMaxWidth(), vm.padOn, { vm.map[it]?.motors?.isNotEmpty() == true }, onKey)
+                ControllerView(vm, skin, vm.padOn, onKey, Modifier.fillMaxWidth())
                 if (!vm.padOn) NoPad()
             }
         }
@@ -286,7 +275,7 @@ private fun PadSection(vm: MainVm, modifier: Modifier, onKey: (Pad) -> Unit) {
         Text(
             if (vm.padOn) (if (n > 0) "$n " + tr("tombol sudah diatur", "buttons configured") else tr("Ketuk tombol untuk mengatur", "Tap a button to configure"))
             else tr("Hubungkan controller melalui Bluetooth", "Connect the controller via Bluetooth"),
-            fontSize = 13.sp, color = pal.mute, textAlign = TextAlign.Center
+            fontSize = 13.sp, color = pal.mute, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
         )
     }
 }
@@ -332,59 +321,6 @@ private fun NoPad() {
 }
 
 @Composable
-fun ControllerView(modifier: Modifier, enabled: Boolean, active: (Pad) -> Boolean, onTap: (Pad) -> Unit) {
-    val pal = LocalPal.current
-    val paint = remember {
-        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            textAlign = android.graphics.Paint.Align.CENTER; isFakeBoldText = true
-        }
-    }
-    Canvas(
-        modifier.aspectRatio(PW / PH).alpha(if (enabled) 1f else 0.35f).pointerInput(enabled) {
-            detectTapGestures { o ->
-                if (!enabled) return@detectTapGestures
-                val s = size.width / PW
-                val x = o.x / s; val y = o.y / s
-                KEYS.asReversed().firstOrNull { hit(it.second, x, y) }?.let { onTap(it.first) }
-            }
-        }
-    ) {
-        scale(size.width / PW, size.width / PW, pivot = Offset.Zero) {
-            val body = Path().apply {
-                moveTo(70f, 70f); cubicTo(90f, 52f, 270f, 52f, 290f, 70f)
-                cubicTo(330f, 88f, 345f, 175f, 330f, 215f); cubicTo(320f, 240f, 290f, 238f, 275f, 215f)
-                cubicTo(262f, 195f, 248f, 185f, 225f, 185f); lineTo(135f, 185f)
-                cubicTo(112f, 185f, 98f, 195f, 85f, 215f); cubicTo(70f, 238f, 40f, 240f, 30f, 215f)
-                cubicTo(15f, 175f, 30f, 88f, 70f, 70f); close()
-            }
-            drawPath(body, pal.body)
-            for ((pad, sh, label) in KEYS) {
-                val on = active(pad)
-                val fill = if (on) pal.acc else pal.key
-                val cx: Float; val cy: Float
-                when (sh) {
-                    is RectS -> {
-                        drawRoundRect(fill, Offset(sh.x, sh.y), Size(sh.w, sh.h), CornerRadius(sh.r))
-                        drawRoundRect(pal.body, Offset(sh.x, sh.y), Size(sh.w, sh.h), CornerRadius(sh.r), style = Stroke(2f))
-                        cx = sh.x + sh.w / 2; cy = sh.y + sh.h / 2
-                    }
-                    is CircS -> {
-                        drawCircle(fill, radius = sh.r, center = Offset(sh.x, sh.y))
-                        drawCircle(pal.body, radius = sh.r, center = Offset(sh.x, sh.y), style = Stroke(2f))
-                        cx = sh.x; cy = sh.y
-                    }
-                }
-                if (label.isNotEmpty()) drawIntoCanvas { c ->
-                    paint.color = (if (on) pal.onAcc else pal.ink).toArgb()
-                    paint.textSize = if (pad == Pad.L3 || pad == Pad.R3) 9f else if (pad == Pad.TP) 10f else 11f
-                    c.nativeCanvas.drawText(label, cx, cy - (paint.ascent() + paint.descent()) / 2, paint)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun DevicePicker(devs: List<BluetoothDevice>, onPick: (BluetoothDevice) -> Unit, onClose: () -> Unit) {
     val ctx = LocalContext.current
     AlertDialog(
@@ -412,6 +348,9 @@ fun SettingsDialog(vm: MainVm, onAbout: () -> Unit, onClose: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Lbl(tr("Bahasa", "Language"))
                 Seg(listOf("id" to "Indonesia", "en" to "English"), Lang.code) { vm.setLang(it) }
+                Spacer(Modifier.height(2.dp))
+                Lbl(tr("Jenis controller", "Controller type"))
+                Seg(listOf("auto" to tr("Otomatis", "Auto"), "ds4" to "DualShock", "xbox" to "Xbox", "joycon" to "Joy-Con"), vm.ctypePref) { vm.setCtypePref(it) }
                 Spacer(Modifier.height(4.dp))
                 OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("About this app", color = LocalPal.current.ink) }
             }

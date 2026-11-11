@@ -15,7 +15,8 @@ import androidx.compose.ui.graphics.Color
 @Immutable
 class Pal(
     val bg: Color, val bg2: Color, val card: Color, val ink: Color, val mute: Color, val line: Color,
-    val body: Color, val key: Color, val ok: Color, val bad: Color, val acc: Color, val acc2: Color, val onAcc: Color
+    val body: Color, val key: Color, val ok: Color, val bad: Color, val acc: Color, val acc2: Color, val onAcc: Color,
+    val bdf: Color, val olc: Color, val rec: Color, val keyf: Color, val mapf: Color
 ) {
     fun grad(): Brush = Brush.horizontalGradient(listOf(acc, acc2))
 }
@@ -23,12 +24,14 @@ class Pal(
 val DarkPal = Pal(
     bg = Color(0xFF070D14), bg2 = Color(0xFF0C1622), card = Color(0xFF0E1822), ink = Color(0xFFEAF2F8), mute = Color(0xFF7F93A6),
     line = Color(0xFF1F2B38), body = Color(0xFF14202D), key = Color(0xFF243446), ok = Color(0xFF3DDC97), bad = Color(0xFFFF6B6B),
-    acc = Color(0xFF19D3C5), acc2 = Color(0xFF8B7CFF), onAcc = Color(0xFF04201E)
+    acc = Color(0xFF19D3C5), acc2 = Color(0xFF8B7CFF), onAcc = Color(0xFF04201E),
+    bdf = Color(0xFF273444), olc = Color(0xFF4F6A93), rec = Color(0xFF03060B), keyf = Color(0xFF354151), mapf = Color(0xFF1D5A62)
 )
 val LightPal = Pal(
     bg = Color(0xFFEEF3F7), bg2 = Color(0xFFE6EDF3), card = Color(0xFFFFFFFF), ink = Color(0xFF0B1822), mute = Color(0xFF5A6D7E),
     line = Color(0xFFD0D9E1), body = Color(0xFFDBE4EC), key = Color(0xFFC5D2DE), ok = Color(0xFF1F9D57), bad = Color(0xFFD93A30),
-    acc = Color(0xFF0AA89C), acc2 = Color(0xFF6A5BE0), onAcc = Color(0xFFFFFFFF)
+    acc = Color(0xFF0AA89C), acc2 = Color(0xFF6A5BE0), onAcc = Color(0xFFFFFFFF),
+    bdf = Color(0xFFDFE7EE), olc = Color(0xFF8FA4BB), rec = Color(0xFFB4C1CE), keyf = Color(0xFFC3CFDB), mapf = Color(0xFF9DDCD6)
 )
 val LocalPal = staticCompositionLocalOf { DarkPal }
 

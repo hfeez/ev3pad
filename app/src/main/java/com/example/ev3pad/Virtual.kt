@@ -276,7 +276,7 @@ fun FullscreenEffects(on: Boolean) {
 
 /** Ikon baterai kecil; warna mengikuti level (hijau, kuning, merah). */
 @Composable
-fun BatteryIcon(pct: Int, modifier: Modifier = Modifier) {
+fun BatteryIcon(pct: Int, modifier: Modifier = Modifier, charging: Boolean = false) {
     val pal = LocalPal.current
     val c = when { pct <= 15 -> pal.bad; pct <= 40 -> Color(0xFFFFC53D); else -> pal.ok }
     Canvas(modifier.size(22.dp, 12.dp)) {
@@ -286,6 +286,14 @@ fun BatteryIcon(pct: Int, modifier: Modifier = Modifier) {
         val fw = (bw - 2 * inset) * pct.coerceIn(0, 100) / 100f
         drawRoundRect(c, Offset(inset, inset), Size(fw, h - 2 * inset), CornerRadius(h * 0.12f))
         drawRoundRect(pal.mute, Offset(bw + 0.5f * density, h * 0.3f), Size(nub - 0.5f * density, h * 0.4f), CornerRadius(1f * density))
+        if (charging) {
+            val bolt = androidx.compose.ui.graphics.Path().apply {
+                moveTo(bw * 0.54f, h * 0.10f); lineTo(bw * 0.30f, h * 0.56f); lineTo(bw * 0.47f, h * 0.56f)
+                lineTo(bw * 0.40f, h * 0.92f); lineTo(bw * 0.70f, h * 0.42f); lineTo(bw * 0.53f, h * 0.42f); close()
+            }
+            drawPath(bolt, Color.White)
+            drawPath(bolt, pal.bg, style = Stroke(0.6f * density))
+        }
     }
 }
 

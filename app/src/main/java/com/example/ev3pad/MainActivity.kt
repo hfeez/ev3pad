@@ -42,13 +42,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refresh() {
-        vm.setPad(InputDevice.getDeviceIds().any { id ->
-            InputDevice.getDevice(id)?.let { d ->
-                !d.isVirtual &&
-                    ((d.sources and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
-                        (d.sources and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK)
-            } == true
-        })
+        val dev = InputDevice.getDeviceIds().asSequence().mapNotNull { InputDevice.getDevice(it) }.firstOrNull { d ->
+            !d.isVirtual &&
+                ((d.sources and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+                    (d.sources and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK)
+        }
+        vm.setPad(dev != null, dev)
     }
 
     private fun keyPad(code: Int): Pad? = when (code) {
